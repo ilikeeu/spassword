@@ -1,143 +1,115 @@
 // 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能 + 密码历史管理
-// 完整修正版 - 2025-06-10
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname;
 
-/**
- * 核心请求处理函数
- * 所有的请求都先经过这里，然后由它根据请求路径(path)分发给具体的处理函数。
- * 这种结构比直接在 export default 中定义 fetch 更清晰、更稳定。
- */
-async function handleRequest(request, env) {
-  const url = new URL(request.url);
-  const path = url.pathname;
+    // 设置CORS头
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    };
 
-  // 设置CORS头，允许跨域请求
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
 
-  // 预检请求直接返回成功
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+    try {
+      // 路由处理
+      if (path === '/' || path === '/index.html') {
+        return new Response(getHTML5(), {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders }
+        });
+      }
+      
+      if (path === '/api/oauth/login') {
+        // 支持GET和POST两种方法
+        if (request.method === 'GET' || request.method === 'POST') {
+          return handleOAuthLogin(request, env, corsHeaders);
+        }
+      }
 
-  try {
-    // === 路由处理 ===
-
-    // 根路径，返回HTML前端界面
-    if (path === '/' || path === '/index.html') {
-      return new Response(getHTML5(), {
-        headers: { 'Content-Type': 'text/html', ...corsHeaders }
+      if (path === '/api/oauth/callback') {
+        return handleOAuthCallback(request, env, corsHeaders);
+      }
+      
+      if (path === '/api/auth/verify') {
+        return handleAuthVerify(request, env, corsHeaders);
+      }
+      
+      if (path === '/api/auth/logout') {
+        return handleLogout(request, env, corsHeaders);
+      }
+      
+      if (path.startsWith('/api/passwords')) {
+        if (path.endsWith('/reveal')) {
+          return getActualPassword(request, env, corsHeaders);
+        }
+        if (path.endsWith('/history')) {
+          return handlePasswordHistory(request, env, corsHeaders);
+        }
+        return handlePasswords(request, env, corsHeaders);
+      }
+      
+      if (path === '/api/passwords/restore') {
+        return handleRestorePassword(request, env, corsHeaders);
+      }
+      
+      if (path.startsWith('/api/categories')) {
+        return handleCategories(request, env, corsHeaders);
+      }
+      
+      if (path === '/api/generate-password') {
+        return handleGeneratePassword(request, env, corsHeaders);
+      }
+      
+      if (path === '/api/export-encrypted') {
+        return handleEncryptedExport(request, env, corsHeaders);
+      }
+      
+      if (path === '/api/import-encrypted') {
+        return handleEncryptedImport(request, env, corsHeaders);
+      }
+      
+      if (path.startsWith('/api/webdav')) {
+        return handleWebDAV(request, env, corsHeaders);
+      }
+      
+      // 登录检测和保存API - 修正版本
+      if (path === '/api/detect-login') {
+        return handleDetectLogin(request, env, corsHeaders);
+      }
+      
+      // 自动填充API - 支持多账户
+      if (path === '/api/auto-fill') {
+        return handleAutoFill(request, env, corsHeaders);
+      }
+      
+      // 账户去重检查API
+      if (path === '/api/check-duplicate') {
+        return handleCheckDuplicate(request, env, corsHeaders);
+      }
+      
+      // 更新现有密码API
+      if (path === '/api/update-existing-password') {
+        return handleUpdateExistingPassword(request, env, corsHeaders);
+      }
+      
+      // 新增：获取用户信息API
+      if (path === '/api/user') {
+        return handleGetUser(request, env, corsHeaders);
+      }
+      
+      return new Response('Not Found', { status: 404, headers: corsHeaders });
+    } catch (error) {
+      console.error('Error:', error);
+      return new Response('Internal Server Error', { 
+        status: 500, 
+        headers: corsHeaders 
       });
     }
-    
-    // OAuth 登录流程
-    if (path === '/api/oauth/login') {
-      if (request.method === 'GET' || request.method === 'POST') {
-        return handleOAuthLogin(request, env, corsHeaders);
-      }
-    }
-
-    if (path === '/api/oauth/callback') {
-      return handleOAuthCallback(request, env, corsHeaders);
-    }
-    
-    // 验证会话令牌
-    if (path === '/api/auth/verify') {
-      return handleAuthVerify(request, env, corsHeaders);
-    }
-    
-    // 登出
-    if (path === '/api/auth/logout') {
-      return handleLogout(request, env, corsHeaders);
-    }
-    
-    // 密码相关的API
-    if (path.startsWith('/api/passwords')) {
-      if (path.endsWith('/reveal')) {
-        return getActualPassword(request, env, corsHeaders);
-      }
-      if (path.endsWith('/history')) {
-        return handlePasswordHistory(request, env, corsHeaders);
-      }
-      return handlePasswords(request, env, corsHeaders);
-    }
-    
-    // 恢复历史密码
-    if (path === '/api/passwords/restore') {
-      return handleRestorePassword(request, env, corsHeaders);
-    }
-    
-    // 分类管理
-    if (path.startsWith('/api/categories')) {
-      return handleCategories(request, env, corsHeaders);
-    }
-    
-    // 密码生成器
-    if (path === '/api/generate-password') {
-      return handleGeneratePassword(request, env, corsHeaders);
-    }
-    
-    // 导入导出
-    if (path === '/api/export-encrypted') {
-      return handleEncryptedExport(request, env, corsHeaders);
-    }
-    
-    if (path === '/api/import-encrypted') {
-      return handleEncryptedImport(request, env, corsHeaders);
-    }
-    
-    // WebDAV 备份
-    if (path.startsWith('/api/webdav')) {
-      return handleWebDAV(request, env, corsHeaders);
-    }
-    
-    // 浏览器扩展接口 - 登录检测
-    if (path === '/api/detect-login') {
-      return handleDetectLogin(request, env, corsHeaders);
-    }
-    
-    // 浏览器扩展接口 - 自动填充
-    if (path === '/api/auto-fill') {
-      return handleAutoFill(request, env, corsHeaders);
-    }
-    
-    // 账户去重检查
-    if (path === '/api/check-duplicate') {
-      return handleCheckDuplicate(request, env, corsHeaders);
-    }
-    
-    // 更新现有密码
-    if (path === '/api/update-existing-password') {
-      return handleUpdateExistingPassword(request, env, corsHeaders);
-    }
-    
-    // 获取用户信息
-    if (path === '/api/user') {
-      return handleGetUser(request, env, corsHeaders);
-    }
-    
-    // 未匹配的路径返回 404
-    return new Response('Not Found', { status: 404, headers: corsHeaders });
-
-  } catch (error) {
-    // 全局错误捕获
-    console.error('Error:', error);
-    return new Response('Internal Server Error', { 
-      status: 500, 
-      headers: corsHeaders 
-    });
   }
-}
-
-/**
- * 导出 Worker 的标准入口点对象
- * 当请求到达时，Cloudflare 会调用这个对象的 fetch 方法
- * 我们让它直接调用上面定义的 handleRequest 函数来处理请求
- */
-export default {
-  fetch: handleRequest
 };
 
 // OAuth登录处理 - 修正版本
@@ -154,8 +126,14 @@ async function handleOAuthLogin(request, env, corsHeaders) {
       });
       
       return new Response(JSON.stringify({ 
+        success: false,
         error: 'OAuth configuration missing',
-        details: 'Please configure OAUTH_BASE_URL, OAUTH_CLIENT_ID, and OAUTH_REDIRECT_URI'
+        details: 'Please configure OAUTH_BASE_URL, OAUTH_CLIENT_ID, and OAUTH_REDIRECT_URI',
+        config: {
+          hasBaseUrl: !!env.OAUTH_BASE_URL,
+          hasClientId: !!env.OAUTH_CLIENT_ID,
+          hasRedirectUri: !!env.OAUTH_REDIRECT_URI
+        }
       }), {
         status: 500,
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -164,8 +142,9 @@ async function handleOAuthLogin(request, env, corsHeaders) {
 
     const state = generateRandomString(32);
 
-    // 构建授权URL
-    const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth2/authorize`);
+    // 构建授权URL - 确保正确的格式
+    const baseUrl = env.OAUTH_BASE_URL.replace(/\/$/, ''); // 移除末尾斜杠
+    const authUrl = new URL(`${baseUrl}/oauth2/authorize`);
     authUrl.searchParams.set('client_id', env.OAUTH_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
     authUrl.searchParams.set('response_type', 'code');
@@ -180,7 +159,12 @@ async function handleOAuthLogin(request, env, corsHeaders) {
     return new Response(JSON.stringify({ 
       success: true,
       authUrl: authUrl.toString(),
-      state: state 
+      state: state,
+      debug: {
+        baseUrl: baseUrl,
+        clientId: env.OAUTH_CLIENT_ID,
+        redirectUri: env.OAUTH_REDIRECT_URI
+      }
     }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
@@ -188,8 +172,10 @@ async function handleOAuthLogin(request, env, corsHeaders) {
   } catch (error) {
     console.error('OAuth login error:', error);
     return new Response(JSON.stringify({
+      success: false,
       error: 'Failed to generate OAuth URL',
-      details: error.message
+      details: error.message,
+      stack: error.stack
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -334,7 +320,8 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     console.log('Exchanging code for token...');
 
     // 交换授权码获取访问令牌
-    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth2/token`, {
+    const baseUrl = env.OAUTH_BASE_URL.replace(/\/$/, '');
+    const tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -359,7 +346,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     console.log('Token data received:', { access_token: !!tokenData.access_token });
 
     // 获取用户信息
-    const userResponse = await fetch(`${env.OAUTH_BASE_URL}/api/user`, {
+    const userResponse = await fetch(`${baseUrl}/api/user`, {
       headers: {
         'Authorization': `Bearer ${tokenData.access_token}`,
         'Accept': 'application/json'
@@ -442,7 +429,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
       username: userData.username,
       nickname: userData.nickname || userData.username,
       email: userData.email || '',
-      avatar: userData.avatar_template ? `${env.OAUTH_BASE_URL}${userData.avatar_template}`.replace('{size}', '120') : '',
+      avatar: userData.avatar_template ? `${baseUrl}${userData.avatar_template}`.replace('{size}', '120') : '',
       loginAt: new Date().toISOString()
     };
 
@@ -2110,7 +2097,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5界面 - 修正版本，修复JavaScript语法错误
+// HTML5界面 - 修正版本，修复JavaScript语法错误和OAuth登录问题
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -3073,6 +3060,8 @@ function getHTML5() {
             font-family: monospace;
             font-size: 0.875rem;
             color: #374151;
+            max-height: 300px;
+            overflow-y: auto;
         }
 
         .debug-info h4 {
@@ -3518,6 +3507,9 @@ function getHTML5() {
             
             // 显示调试信息区域
             document.getElementById('debugInfo').classList.remove('hidden');
+            
+            // 自动滚动到底部
+            debugContent.scrollTop = debugContent.scrollHeight;
         }
 
         // 切换调试模式
@@ -3675,7 +3667,7 @@ function getHTML5() {
             }
         }
 
-        // OAuth登录处理 - 修正版本
+        // OAuth登录处理 - 修正版本，增强错误处理和调试信息
         async function handleOAuthLogin() {
             const button = document.getElementById('oauthLoginBtn');
             const originalText = button.innerHTML;
@@ -3688,30 +3680,31 @@ function getHTML5() {
                 
                 addDebugInfo('发送请求到 /api/oauth/login');
                 
-                // 修正：使用正确的请求方式
                 const response = await fetch('/api/oauth/login', {
-                    method: 'POST',  // 改为POST
+                    method: 'POST',
                     headers: {
                         'Accept': 'application/json',
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({})  // 发送空的JSON体
+                    body: JSON.stringify({})
                 });
                 
                 addDebugInfo('OAuth 登录响应状态: ' + response.status);
                 
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    addDebugInfo('OAuth 登录失败响应: ' + errorText);
-                    throw new Error('HTTP ' + response.status + ': ' + errorText);
-                }
-                
                 const data = await response.json();
-                addDebugInfo('OAuth 登录响应数据: ' + JSON.stringify(data));
+                addDebugInfo('OAuth 登录响应数据: ' + JSON.stringify(data, null, 2));
                 
-                if (data.error) {
-                    addDebugInfo('OAuth 配置错误: ' + data.error);
-                    throw new Error(data.error + (data.details ? ': ' + data.details : ''));
+                if (!response.ok || !data.success) {
+                    const errorMessage = data.error || 'OAuth 登录失败';
+                    const errorDetails = data.details || '';
+                    
+                    addDebugInfo('OAuth 登录失败: ' + errorMessage);
+                    
+                    if (data.config) {
+                        addDebugInfo('OAuth 配置状态: ' + JSON.stringify(data.config));
+                    }
+                    
+                    throw new Error(errorMessage + (errorDetails ? ': ' + errorDetails : ''));
                 }
                 
                 if (!data.authUrl) {
@@ -3724,9 +3717,11 @@ function getHTML5() {
                 // 更新按钮状态
                 button.innerHTML = '<div class="loading"></div> 正在跳转到授权页面...';
                 
-                // 立即跳转
-                addDebugInfo('执行页面跳转');
-                window.location.href = data.authUrl;
+                // 延迟跳转，确保用户看到状态更新
+                setTimeout(() => {
+                    addDebugInfo('执行页面跳转');
+                    window.location.href = data.authUrl;
+                }, 1000);
                 
             } catch (error) {
                 addDebugInfo('OAuth 登录错误: ' + error.message);
@@ -4397,10 +4392,6 @@ function getHTML5() {
                     clearForm();
                     loadPasswords(currentPage, searchQuery, categoryFilter);
                 } else {
-                    showNotification('更新密码失败', 'error');
-                }
-            } catch (error) {
-                addDebugInfo('更新现有密码失败: ' + error.message);
                 showNotification('更新密码失败', 'error');
             }
         }
@@ -4886,3 +4877,4 @@ function getHTML5() {
 </body>
 </html>`;
 }
+
