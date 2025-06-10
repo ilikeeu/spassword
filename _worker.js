@@ -1,39 +1,39 @@
 // 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能 + 密码历史管理
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-  }
-};
+// 完整修正版 - 2025-06-10
 
-// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能 + 密码历史管理
-
-// 将核心的 fetch 逻辑提取到独立的 handleRequest 函数中
+/**
+ * 核心请求处理函数
+ * 所有的请求都先经过这里，然后由它根据请求路径(path)分发给具体的处理函数。
+ * 这种结构比直接在 export default 中定义 fetch 更清晰、更稳定。
+ */
 async function handleRequest(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
 
-  // 设置CORS头
+  // 设置CORS头，允许跨域请求
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 
+  // 预检请求直接返回成功
   if (request.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // 路由处理
+    // === 路由处理 ===
+
+    // 根路径，返回HTML前端界面
     if (path === '/' || path === '/index.html') {
       return new Response(getHTML5(), {
         headers: { 'Content-Type': 'text/html', ...corsHeaders }
       });
     }
     
+    // OAuth 登录流程
     if (path === '/api/oauth/login') {
-      // 支持GET和POST两种方法
       if (request.method === 'GET' || request.method === 'POST') {
         return handleOAuthLogin(request, env, corsHeaders);
       }
@@ -43,14 +43,17 @@ async function handleRequest(request, env) {
       return handleOAuthCallback(request, env, corsHeaders);
     }
     
+    // 验证会话令牌
     if (path === '/api/auth/verify') {
       return handleAuthVerify(request, env, corsHeaders);
     }
     
+    // 登出
     if (path === '/api/auth/logout') {
       return handleLogout(request, env, corsHeaders);
     }
     
+    // 密码相关的API
     if (path.startsWith('/api/passwords')) {
       if (path.endsWith('/reveal')) {
         return getActualPassword(request, env, corsHeaders);
@@ -61,18 +64,22 @@ async function handleRequest(request, env) {
       return handlePasswords(request, env, corsHeaders);
     }
     
+    // 恢复历史密码
     if (path === '/api/passwords/restore') {
       return handleRestorePassword(request, env, corsHeaders);
     }
     
+    // 分类管理
     if (path.startsWith('/api/categories')) {
       return handleCategories(request, env, corsHeaders);
     }
     
+    // 密码生成器
     if (path === '/api/generate-password') {
       return handleGeneratePassword(request, env, corsHeaders);
     }
     
+    // 导入导出
     if (path === '/api/export-encrypted') {
       return handleEncryptedExport(request, env, corsHeaders);
     }
@@ -81,37 +88,41 @@ async function handleRequest(request, env) {
       return handleEncryptedImport(request, env, corsHeaders);
     }
     
+    // WebDAV 备份
     if (path.startsWith('/api/webdav')) {
       return handleWebDAV(request, env, corsHeaders);
     }
     
-    // 登录检测和保存API - 修正版本
+    // 浏览器扩展接口 - 登录检测
     if (path === '/api/detect-login') {
       return handleDetectLogin(request, env, corsHeaders);
     }
     
-    // 自动填充API - 支持多账户
+    // 浏览器扩展接口 - 自动填充
     if (path === '/api/auto-fill') {
       return handleAutoFill(request, env, corsHeaders);
     }
     
-    // 账户去重检查API
+    // 账户去重检查
     if (path === '/api/check-duplicate') {
       return handleCheckDuplicate(request, env, corsHeaders);
     }
     
-    // 更新现有密码API
+    // 更新现有密码
     if (path === '/api/update-existing-password') {
       return handleUpdateExistingPassword(request, env, corsHeaders);
     }
     
-    // 新增：获取用户信息API
+    // 获取用户信息
     if (path === '/api/user') {
       return handleGetUser(request, env, corsHeaders);
     }
     
+    // 未匹配的路径返回 404
     return new Response('Not Found', { status: 404, headers: corsHeaders });
+
   } catch (error) {
+    // 全局错误捕获
     console.error('Error:', error);
     return new Response('Internal Server Error', { 
       status: 500, 
@@ -120,7 +131,14 @@ async function handleRequest(request, env) {
   }
 }
 
-
+/**
+ * 导出 Worker 的标准入口点对象
+ * 当请求到达时，Cloudflare 会调用这个对象的 fetch 方法
+ * 我们让它直接调用上面定义的 handleRequest 函数来处理请求
+ */
+export default {
+  fetch: handleRequest
+};
 
 // OAuth登录处理 - 修正版本
 async function handleOAuthLogin(request, env, corsHeaders) {
