@@ -100,7 +100,7 @@ export default {
 // OAuth登录处理
 async function handleOAuthLogin(request, env, corsHeaders) {
   const state = generateRandomString(32);
-  const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth/authorize`);
+  const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth2/authorize`);
   
   authUrl.searchParams.set('client_id', env.OAUTH_CLIENT_ID);
   authUrl.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
@@ -137,7 +137,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
   await env.PASSWORD_KV.delete(`oauth_state_${state}`);
   
   try {
-    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth/token`, {
+    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth2/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -232,7 +232,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
       username: userData.username,
       nickname: userData.nickname,
       email: userData.email,
-      avatar: userData.avatar_url || 'https://yanxuan.nosdn.127.net/233a2a8170847d3287ec058c51cf60a9.jpg',
+      avatar: userData.avatar_template || 'https://yanxuan.nosdn.127.net/233a2a8170847d3287ec058c51cf60a9.jpg',
       loginAt: new Date().toISOString()
     };
     
