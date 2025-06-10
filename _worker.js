@@ -1,4 +1,4 @@
-// 增强版密码管理器 - Cloudflare Workers + KV + OAuth
+// 增强版密码管理器 - Cloudflare Workers + KV + OAuth (修复版)
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -40,6 +40,9 @@ export default {
       }
       
       if (path.startsWith('/api/passwords')) {
+        if (path.endsWith('/reveal')) {
+          return getActualPassword(request, env, corsHeaders);
+        }
         return handlePasswords(request, env, corsHeaders);
       }
       
@@ -127,32 +130,43 @@ async function handleOAuthCallback(request, env, corsHeaders) {
       })
     });
     
+    if (!tokenResponse.ok) {
+      const errorText = await tokenResponse.text();
+      console.error('Token exchange failed:', errorText);
+      throw new Error(`Token exchange failed: ${tokenResponse.status}`);
+    }
+    
     const tokenData = await tokenResponse.json();
     
-    if (!tokenResponse.ok) {
-      throw new Error(tokenData.error || 'Token exchange failed');
+    if (!tokenData.access_token) {
+      throw new Error('No access token received');
     }
     
     // 获取用户信息
-    const userResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth/userinfo`, {
+    const userResponse = await fetch(`${env.OAUTH_BASE_URL}/api/user`, {
       headers: {
-        'Authorization': `Bearer ${tokenData.access_token}`
+        'Authorization': `Bearer ${tokenData.access_token}`,
+        'Accept': 'application/json'
       }
     });
     
-    const userData = await userResponse.json();
-    
     if (!userResponse.ok) {
-      throw new Error('Failed to get user info');
+      const errorText = await userResponse.text();
+      console.error('User info request failed:', errorText);
+      throw new Error(`Failed to get user info: ${userResponse.status}`);
     }
+    
+    const userData = await userResponse.json();
+    console.log('User data received:', userData);
     
     // 创建会话
     const sessionToken = generateRandomString(64);
     const userSession = {
-      userId: userData.sub || userData.id,
+      userId: userData.id.toString(),
+      username: userData.username,
+      nickname: userData.nickname,
       email: userData.email,
-      name: userData.name,
-      avatar: userData.picture,
+      avatar: userData.avatar_url || 'https://yanxuan.nosdn.127.net/233a2a8170847d3287ec058c51cf60a9.jpg',
       loginAt: new Date().toISOString()
     };
     
@@ -163,10 +177,53 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     // 重定向到主页面并设置token
     return new Response(`
       <html>
-        <script>
-          localStorage.setItem('authToken', '${sessionToken}');
-          window.location.href = '/';
-        </script>
+        <head>
+          <title>登录成功</title>
+          <style>
+            body { 
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+              display: flex; 
+              justify-content: center; 
+              align-items: center; 
+              height: 100vh; 
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              margin: 0;
+            }
+            .message { 
+              background: white; 
+              padding: 30px; 
+              border-radius: 15px; 
+              text-align: center;
+              box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            }
+            .loading {
+              display: inline-block;
+              width: 20px;
+              height: 20px;
+              border: 3px solid #f3f3f3;
+              border-top: 3px solid #667eea;
+              border-radius: 50%;
+              animation: spin 1s linear infinite;
+              margin-right: 10px;
+            }
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="message">
+            <div class="loading"></div>
+            登录成功，正在跳转...
+          </div>
+          <script>
+            localStorage.setItem('authToken', '${sessionToken}');
+            setTimeout(() => {
+              window.location.href = '/';
+            }, 1000);
+          </script>
+        </body>
       </html>
     `, {
       headers: { 'Content-Type': 'text/html', ...corsHeaders }
@@ -174,9 +231,50 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     
   } catch (error) {
     console.error('OAuth callback error:', error);
-    return new Response(`Authentication failed: ${error.message}`, { 
+    return new Response(`
+      <html>
+        <head>
+          <title>登录失败</title>
+          <style>
+            body { 
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+              display: flex; 
+              justify-content: center; 
+              align-items: center; 
+              height: 100vh; 
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              margin: 0;
+            }
+            .message { 
+              background: white; 
+              padding: 30px; 
+              border-radius: 15px; 
+              text-align: center;
+              box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+              color: #e53e3e;
+            }
+            .btn {
+              background: #667eea;
+              color: white;
+              border: none;
+              padding: 10px 20px;
+              border-radius: 5px;
+              cursor: pointer;
+              margin-top: 15px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="message">
+            <h3>登录失败</h3>
+            <p>${error.message}</p>
+            <button class="btn" onclick="window.location.href='/'">返回首页</button>
+          </div>
+        </body>
+      </html>
+    `, { 
       status: 500, 
-      headers: corsHeaders 
+      headers: { 'Content-Type': 'text/html', ...corsHeaders }
     });
   }
 }
@@ -364,7 +462,8 @@ async function getActualPassword(request, env, corsHeaders) {
   }
   
   const url = new URL(request.url);
-  const id = url.pathname.split('/').pop();
+  const pathParts = url.pathname.split('/');
+  const id = pathParts[pathParts.length - 2]; // 倒数第二个部分是ID
   const userId = session.userId;
   
   const password = await env.PASSWORD_KV.get(`password_${userId}_${id}`);
@@ -596,7 +695,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML界面（增强版）
+// HTML界面（更新用户信息显示）
 function getHTML() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -668,6 +767,12 @@ function getHTML() {
             box-shadow: 0 5px 15px rgba(0,0,0,0.2);
         }
         
+        .oauth-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
         /* 主界面 */
         .header {
             background: white;
@@ -696,6 +801,13 @@ function getHTML() {
             justify-content: center;
             color: white;
             font-weight: bold;
+            overflow: hidden;
+        }
+        
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
         
         .user-details h3 {
@@ -1095,8 +1207,8 @@ function getHTML() {
             <h1>密码管理器 Pro</h1>
             <p>安全、便捷的密码管理解决方案</p>
             <button id="oauthLoginBtn" class="oauth-button">
-                <i class="fab fa-google"></i>
-                使用 OAuth 登录
+                <i class="fas fa-sign-in-alt"></i>
+                OAuth 登录
             </button>
         </div>
     </div>
@@ -1106,7 +1218,9 @@ function getHTML() {
         <!-- 头部 -->
         <div class="header">
             <div class="user-info">
-                <div class="user-avatar" id="userAvatar">U</div>
+                <div class="user-avatar" id="userAvatar">
+                    <i class="fas fa-user"></i>
+                </div>
                 <div class="user-details">
                     <h3 id="userName">用户名</h3>
                     <p id="userEmail">user@example.com</p>
@@ -1289,7 +1403,7 @@ function getHTML() {
                 window.location.href = data.authUrl;
             } catch (error) {
                 showNotification('登录失败', 'error');
-                this.innerHTML = '<i class="fab fa-google"></i> 使用 OAuth 登录';
+                this.innerHTML = '<i class="fas fa-sign-in-alt"></i> OAuth 登录';
                 this.disabled = false;
             }
         });
@@ -1332,14 +1446,17 @@ function getHTML() {
             
             // 更新用户信息
             if (currentUser) {
-                document.getElementById('userName').textContent = currentUser.name || '用户';
+                // 显示用户名（优先显示nickname，没有则显示username）
+                const displayName = currentUser.nickname || currentUser.username || '用户';
+                document.getElementById('userName').textContent = displayName;
                 document.getElementById('userEmail').textContent = currentUser.email || '';
                 
+                // 显示头像
                 const avatar = document.getElementById('userAvatar');
                 if (currentUser.avatar) {
-                    avatar.innerHTML = \`<img src="\${currentUser.avatar}" style="width: 100%; height: 100%; border-radius: 50%;">\`;
+                    avatar.innerHTML = \`<img src="\${currentUser.avatar}" alt="用户头像">\`;
                 } else {
-                    avatar.textContent = (currentUser.name || 'U').charAt(0).toUpperCase();
+                    avatar.innerHTML = displayName.charAt(0).toUpperCase();
                 }
             }
         }
