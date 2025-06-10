@@ -1,4 +1,4 @@
-// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth
+// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -360,7 +360,7 @@ async function handleLogout(request, env, corsHeaders) {
   });
 }
 
-// 密码条目处理
+// 密码条目处理 - 增加分页功能
 async function handlePasswords(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -373,6 +373,12 @@ async function handlePasswords(request, env, corsHeaders) {
   const url = new URL(request.url);
   const id = url.pathname.split('/').pop();
   const userId = session.userId;
+  
+  // 获取分页参数
+  const page = parseInt(url.searchParams.get('page')) || 1;
+  const limit = parseInt(url.searchParams.get('limit')) || 50;
+  const search = url.searchParams.get('search') || '';
+  const category = url.searchParams.get('category') || '';
   
   switch (request.method) {
     case 'GET':
@@ -388,8 +394,9 @@ async function handlePasswords(request, env, corsHeaders) {
           headers: { 'Content-Type': 'application/json', ...corsHeaders }
         });
       } else {
+        // 获取所有密码
         const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
-        const passwords = [];
+        let passwords = [];
         
         for (const key of list.keys) {
           const data = await env.PASSWORD_KV.get(key.name);
@@ -402,6 +409,7 @@ async function handlePasswords(request, env, corsHeaders) {
           }
         }
         
+        // 排序
         passwords.sort((a, b) => {
           if (a.category !== b.category) {
             return (a.category || '其他').localeCompare(b.category || '其他');
@@ -409,7 +417,41 @@ async function handlePasswords(request, env, corsHeaders) {
           return a.siteName.localeCompare(b.siteName);
         });
         
-        return new Response(JSON.stringify(passwords), {
+        // 过滤
+        let filteredPasswords = passwords;
+        
+        if (search) {
+          const searchLower = search.toLowerCase();
+          filteredPasswords = filteredPasswords.filter(p => 
+            p.siteName.toLowerCase().includes(searchLower) ||
+            p.username.toLowerCase().includes(searchLower) ||
+            (p.notes && p.notes.toLowerCase().includes(searchLower)) ||
+            (p.url && p.url.toLowerCase().includes(searchLower))
+          );
+        }
+        
+        if (category) {
+          filteredPasswords = filteredPasswords.filter(p => p.category === category);
+        }
+        
+        // 分页
+        const total = filteredPasswords.length;
+        const totalPages = Math.ceil(total / limit);
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        const paginatedPasswords = filteredPasswords.slice(startIndex, endIndex);
+        
+        return new Response(JSON.stringify({
+          passwords: paginatedPasswords,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1
+          }
+        }), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders }
         });
       }
@@ -1550,7 +1592,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5界面 - 保持原有界面不变
+// HTML5界面 - 增加分页功能
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2029,6 +2071,43 @@ function getHTML5() {
             justify-content: center;
         }
 
+        /* 分页组件 */
+        .pagination-container {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: var(--card-background);
+            border-radius: var(--border-radius-xl);
+            box-shadow: var(--shadow-lg);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .pagination-info {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        
+        .pagination-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        
+        .pagination-ellipsis {
+            color: var(--text-secondary);
+            padding: 0 0.5rem;
+            font-weight: 600;
+        }
+
         /* 表单组件 */
         .form-section {
             background: var(--card-background);
@@ -2336,6 +2415,15 @@ function getHTML5() {
             .notification.show {
                 transform: translateY(0);
             }
+
+            .pagination {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .pagination-controls {
+                justify-content: center;
+            }
         }
 
         /* 工具类 */
@@ -2454,6 +2542,7 @@ function getHTML5() {
                 <section class="passwords-grid" id="passwordsGrid">
                     <!-- 密码卡片将在这里动态生成 -->
                 </section>
+                <!-- 分页容器将在这里动态生成 -->
             </main>
         </div>
 
@@ -2645,6 +2734,13 @@ function getHTML5() {
         let editingPasswordId = null;
         let selectedFile = null;
         let currentTab = 'passwords';
+        
+        // 分页相关变量
+        let currentPage = 1;
+        let totalPages = 1;
+        let pageLimit = 50;
+        let searchQuery = '';
+        let categoryFilter = '';
 
         // 创建粒子背景
         function createParticles() {
@@ -2673,10 +2769,22 @@ function getHTML5() {
             setupEventListeners();
         });
 
-        // 设置事件监听器
+        // 设置事件监听器 - 支持分页
         function setupEventListeners() {
-            document.getElementById('searchInput').addEventListener('input', filterPasswords);
-            document.getElementById('categoryFilter').addEventListener('change', filterPasswords);
+            const searchInput = document.getElementById('searchInput');
+            const categoryFilter = document.getElementById('categoryFilter');
+            
+            // 防抖搜索
+            let searchTimeout;
+            searchInput.addEventListener('input', function() {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    filterPasswords();
+                }, 500);
+            });
+            
+            categoryFilter.addEventListener('change', filterPasswords);
+            
             document.getElementById('passwordLength').addEventListener('input', function() {
                 document.getElementById('lengthValue').textContent = this.value;
             });
@@ -2762,7 +2870,7 @@ function getHTML5() {
             
             // 如果切换到密码管理页面，刷新数据
             if (tabName === 'passwords') {
-                loadPasswords();
+                loadPasswords(1);
             } else if (tabName === 'backup') {
                 loadWebDAVConfig();
             }
@@ -2841,22 +2949,43 @@ function getHTML5() {
         // 加载数据
         async function loadData() {
             await Promise.all([
-                loadPasswords(),
+                loadPasswords(1),
                 loadCategories()
             ]);
         }
 
-        // 加载密码列表
-        async function loadPasswords() {
+        // 加载密码列表 - 支持分页
+        async function loadPasswords(page = 1, search = '', category = '') {
             try {
-                const response = await fetch('/api/passwords', {
+                currentPage = page;
+                searchQuery = search;
+                categoryFilter = category;
+                
+                const params = new URLSearchParams({
+                    page: page.toString(),
+                    limit: pageLimit.toString()
+                });
+                
+                if (search) params.append('search', search);
+                if (category) params.append('category', category);
+                
+                const response = await fetch(\`/api/passwords?\${params}\`, {
                     headers: {
                         'Authorization': 'Bearer ' + authToken
                     }
                 });
                 
-                passwords = await response.json();
+                const data = await response.json();
+                passwords = data.passwords || [];
+                
+                if (data.pagination) {
+                    currentPage = data.pagination.page;
+                    totalPages = data.pagination.totalPages;
+                    updatePaginationInfo(data.pagination);
+                }
+                
                 renderPasswords();
+                renderPagination(data.pagination);
             } catch (error) {
                 console.error('Failed to load passwords:', error);
                 showNotification('加载密码失败', 'error');
@@ -2881,34 +3010,34 @@ function getHTML5() {
 
         // 更新分类选择器
         function updateCategorySelects() {
-            const categoryFilter = document.getElementById('categoryFilter');
+            const categoryFilterSelect = document.getElementById('categoryFilter');
             const categorySelect = document.getElementById('category');
             
-            categoryFilter.innerHTML = '<option value="">🏷️ 所有分类</option>';
+            categoryFilterSelect.innerHTML = '<option value="">🏷️ 所有分类</option>';
             categorySelect.innerHTML = '<option value="">选择分类</option>';
             
             categories.forEach(category => {
-                categoryFilter.innerHTML += \`<option value="\${category}">🏷️ \${category}</option>\`;
+                categoryFilterSelect.innerHTML += \`<option value="\${category}">🏷️ \${category}</option>\`;
                 categorySelect.innerHTML += \`<option value="\${category}">\${category}</option>\`;
             });
         }
 
         // 渲染密码列表
-        function renderPasswords(filteredPasswords = passwords) {
+        function renderPasswords() {
             const grid = document.getElementById('passwordsGrid');
             
-            if (filteredPasswords.length === 0) {
+            if (passwords.length === 0) {
                 grid.innerHTML = \`
                     <div class="empty-state">
                         <div class="icon">🔑</div>
-                        <h3>还没有保存的密码</h3>
-                        <p>点击"添加密码"标签页开始管理您的密码吧！</p>
+                        <h3>没有找到密码</h3>
+                        <p>\${searchQuery || categoryFilter ? '尝试调整搜索条件或清空筛选' : '点击"添加密码"标签页开始管理您的密码吧！'}</p>
                     </div>
                 \`;
                 return;
             }
             
-            grid.innerHTML = filteredPasswords.map(password => \`
+            grid.innerHTML = passwords.map(password => \`
                 <article class="password-card">
                     <header class="password-header">
                         <div class="site-icon">
@@ -2962,22 +3091,101 @@ function getHTML5() {
             \`).join('');
         }
 
-        // 过滤密码
+        // 渲染分页
+        function renderPagination(pagination) {
+            let container = document.getElementById('paginationContainer');
+            if (!container) {
+                // 创建分页容器
+                container = document.createElement('div');
+                container.id = 'paginationContainer';
+                container.className = 'pagination-container';
+                document.getElementById('passwordsGrid').parentNode.appendChild(container);
+            }
+            
+            if (!pagination || pagination.totalPages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+            
+            let paginationHTML = \`
+                <div class="pagination">
+                    <div class="pagination-info">
+                        显示第 \${((pagination.page - 1) * pagination.limit) + 1}-\${Math.min(pagination.page * pagination.limit, pagination.total)} 条，共 \${pagination.total} 条
+                    </div>
+                    <div class="pagination-controls">
+            \`;
+            
+            // 上一页按钮
+            if (pagination.hasPrev) {
+                paginationHTML += \`
+                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.page - 1}, '\${searchQuery}', '\${categoryFilter}')" type="button">
+                        <i class="fas fa-chevron-left"></i> 上一页
+                    </button>
+                \`;
+            }
+            
+            // 页码按钮
+            const startPage = Math.max(1, pagination.page - 2);
+            const endPage = Math.min(pagination.totalPages, pagination.page + 2);
+            
+            if (startPage > 1) {
+                paginationHTML += \`
+                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(1, '\${searchQuery}', '\${categoryFilter}')" type="button">1</button>
+                \`;
+                if (startPage > 2) {
+                    paginationHTML += \`<span class="pagination-ellipsis">...</span>\`;
+                }
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                const isActive = i === pagination.page;
+                paginationHTML += \`
+                    <button class="btn \${isActive ? 'btn-primary' : 'btn-secondary'} btn-sm" 
+                            onclick="loadPasswords(\${i}, '\${searchQuery}', '\${categoryFilter}')" 
+                            type="button" \${isActive ? 'disabled' : ''}>
+                        \${i}
+                    </button>
+                \`;
+            }
+            
+            if (endPage < pagination.totalPages) {
+                if (endPage < pagination.totalPages - 1) {
+                    paginationHTML += \`<span class="pagination-ellipsis">...</span>\`;
+                }
+                paginationHTML += \`
+                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.totalPages}, '\${searchQuery}', '\${categoryFilter}')" type="button">\${pagination.totalPages}</button>
+                \`;
+            }
+            
+            // 下一页按钮
+            if (pagination.hasNext) {
+                paginationHTML += \`
+                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.page + 1}, '\${searchQuery}', '\${categoryFilter}')" type="button">
+                        下一页 <i class="fas fa-chevron-right"></i>
+                    </button>
+                \`;
+            }
+            
+            paginationHTML += \`
+                    </div>
+                </div>
+            \`;
+            
+            container.innerHTML = paginationHTML;
+        }
+
+        // 更新分页信息
+        function updatePaginationInfo(pagination) {
+            console.log('分页信息:', pagination);
+        }
+
+        // 过滤密码 - 支持分页
         function filterPasswords() {
-            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const searchTerm = document.getElementById('searchInput').value;
             const categoryFilter = document.getElementById('categoryFilter').value;
             
-            let filtered = passwords.filter(password => {
-                const matchesSearch = password.siteName.toLowerCase().includes(searchTerm) ||
-                                    password.username.toLowerCase().includes(searchTerm) ||
-                                    (password.notes && password.notes.toLowerCase().includes(searchTerm));
-                
-                const matchesCategory = !categoryFilter || password.category === categoryFilter;
-                
-                return matchesSearch && matchesCategory;
-            });
-            
-            renderPasswords(filtered);
+            // 重置到第一页并重新加载
+            loadPasswords(1, searchTerm, categoryFilter);
         }
 
         // 显示/隐藏密码
@@ -3047,7 +3255,7 @@ function getHTML5() {
             submitBtn.innerHTML = '<i class="fas fa-save"></i> 更新密码';
         }
 
-        // 删除密码
+        // 删除密码 - 支持分页
         async function deletePassword(passwordId) {
             if (!confirm('🗑️ 确定要删除这个密码吗？此操作无法撤销。')) return;
             
@@ -3061,7 +3269,8 @@ function getHTML5() {
                 
                 if (response.ok) {
                     showNotification('密码已删除 🗑️');
-                    loadPasswords();
+                    // 重新加载当前页
+                    loadPasswords(currentPage, searchQuery, categoryFilter);
                 } else {
                     showNotification('删除失败', 'error');
                 }
@@ -3104,7 +3313,7 @@ function getHTML5() {
                 if (response.ok) {
                     showNotification(editingPasswordId ? '密码已更新 ✅' : '密码已添加 ✅');
                     clearForm();
-                    loadPasswords();
+                    loadPasswords(currentPage, searchQuery, categoryFilter);
                 } else if (response.status === 409) {
                     // 处理重复冲突
                     const result = await response.json();
@@ -3341,7 +3550,7 @@ function getHTML5() {
                 const result = await response.json();
                 if (result.success) {
                     showNotification(result.message + ' 🔄');
-                    loadPasswords();
+                    loadPasswords(currentPage, searchQuery, categoryFilter);
                 } else {
                     showNotification(result.error || '恢复失败', 'error');
                 }
@@ -3496,7 +3705,7 @@ function getHTML5() {
                         document.getElementById('importPassword').value = '';
                         document.getElementById('encryptedImportForm').classList.add('hidden');
                         selectedFile = null;
-                        loadPasswords();
+                        loadPasswords(currentPage, searchQuery, categoryFilter);
                     } else {
                         showNotification(result.error || '导入失败', 'error');
                     }
@@ -3562,3 +3771,4 @@ function getHTML5() {
 </body>
 </html>`;
 }
+        
