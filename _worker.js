@@ -1338,7 +1338,7 @@ async function getActualPassword(request, env, corsHeaders) {
   }
 }
 
-// 分类管理
+// 分类管理 - 修正版本，支持从密码数据中自动提取分类
 async function handleCategories(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -1351,28 +1351,73 @@ async function handleCategories(request, env, corsHeaders) {
   const userId = session.userId;
 
   if (request.method === 'GET') {
-    const categories = await env.PASSWORD_KV.get(`categories_${userId}`);
-    return new Response(categories || JSON.stringify([]), {
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    try {
+      // 获取用户自定义分类
+      const categoriesData = await env.PASSWORD_KV.get(`categories_${userId}`);
+      let customCategories = categoriesData ? JSON.parse(categoriesData) : [];
+      
+      // 从密码数据中提取分类
+      const passwordList = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
+      const extractedCategories = new Set();
+      
+      for (const key of passwordList.keys) {
+        try {
+          const data = await env.PASSWORD_KV.get(key.name);
+          if (data) {
+            const passwordData = JSON.parse(data);
+            if (passwordData.category && passwordData.category.trim()) {
+              extractedCategories.add(passwordData.category.trim());
+            }
+          }
+        } catch (error) {
+          console.error('解析密码数据失败:', error);
+          continue;
+        }
+      }
+      
+      // 合并自定义分类和提取的分类
+      const allCategories = [...new Set([...customCategories, ...extractedCategories])];
+      allCategories.sort();
+      
+      return new Response(JSON.stringify(allCategories), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    } catch (error) {
+      console.error('获取分类失败:', error);
+      return new Response(JSON.stringify([]), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
   }
 
   if (request.method === 'POST') {
-    const { action, category } = await request.json();
-    const categoriesData = await env.PASSWORD_KV.get(`categories_${userId}`);
-    let categories = categoriesData ? JSON.parse(categoriesData) : [];
+    try {
+      const { action, category } = await request.json();
+      const categoriesData = await env.PASSWORD_KV.get(`categories_${userId}`);
+      let categories = categoriesData ? JSON.parse(categoriesData) : [];
 
-    if (action === 'add' && category && !categories.includes(category)) {
-      categories.push(category);
-      await env.PASSWORD_KV.put(`categories_${userId}`, JSON.stringify(categories));
-    } else if (action === 'remove' && category) {
-      categories = categories.filter(c => c !== category);
-      await env.PASSWORD_KV.put(`categories_${userId}`, JSON.stringify(categories));
+      if (action === 'add' && category && category.trim() && !categories.includes(category.trim())) {
+        categories.push(category.trim());
+        categories.sort();
+        await env.PASSWORD_KV.put(`categories_${userId}`, JSON.stringify(categories));
+      } else if (action === 'remove' && category) {
+        categories = categories.filter(c => c !== category);
+        await env.PASSWORD_KV.put(`categories_${userId}`, JSON.stringify(categories));
+      }
+
+      return new Response(JSON.stringify({ success: true, categories }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    } catch (error) {
+      console.error('分类操作失败:', error);
+      return new Response(JSON.stringify({ 
+        error: '分类操作失败',
+        message: error.message 
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
     }
-
-    return new Response(JSON.stringify({ success: true, categories }), {
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
   }
 
   return new Response('Method not allowed', { status: 405, headers: corsHeaders });
@@ -2246,7 +2291,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5界面 - 修正版本，添加密码历史记录删除功能
+// HTML5界面 - 修正版本，添加分类管理功能，优化编辑功能
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2979,6 +3024,71 @@ function getHTML5() {
             color: var(--text-primary);
         }
 
+        /* 分类管理 */
+        .category-management {
+            background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+            padding: 1.5rem;
+            border-radius: var(--border-radius-lg);
+            margin-bottom: 1.5rem;
+            border: 2px solid #bae6fd;
+        }
+
+        .category-management h4 {
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+            font-size: 1rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .category-input-group {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .category-input {
+            flex: 1;
+            padding: 0.5rem 0.75rem;
+            border: 2px solid var(--border-color);
+            border-radius: var(--border-radius-sm);
+            font-size: 0.875rem;
+        }
+
+        .category-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .category-tag {
+            background: var(--primary-color);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: var(--border-radius-xl);
+            font-size: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .category-tag .remove-btn {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            padding: 0;
+            font-size: 0.875rem;
+            opacity: 0.8;
+        }
+
+        .category-tag .remove-btn:hover {
+            opacity: 1;
+        }
+
         /* 密码生成器 */
         .password-generator {
             background: linear-gradient(135deg, #f8fafc, #f1f5f9);
@@ -3251,6 +3361,10 @@ function getHTML5() {
                 flex-direction: column;
                 gap: 0.5rem;
             }
+
+            .category-input-group {
+                flex-direction: column;
+            }
         }
 
         /* 工具类 */
@@ -3387,6 +3501,20 @@ function getHTML5() {
             <div class="form-section">
                 <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">✨ 添加新密码</h2>
                 
+                <!-- 分类管理 -->
+                <fieldset class="category-management">
+                    <legend><i class="fas fa-tags"></i> 分类管理</legend>
+                    <div class="category-input-group">
+                        <input type="text" id="newCategoryInput" class="category-input" placeholder="输入新分类名称..." maxlength="20">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="addCategory()">
+                            <i class="fas fa-plus"></i> 添加分类
+                        </button>
+                    </div>
+                    <div class="category-tags" id="categoryTags">
+                        <!-- 分类标签将在这里动态生成 -->
+                    </div>
+                </fieldset>
+                
                 <!-- 重复检查提示 -->
                 <div id="duplicateWarning" class="duplicate-warning hidden">
                     <h4>⚠️ 检测到重复账户</h4>
@@ -3403,15 +3531,18 @@ function getHTML5() {
                         <input type="text" id="username" class="form-control" required placeholder="your@email.com" autocomplete="username">
                     </div>
                     <div class="form-group">
-                        <label for="password">🔑 密码 *</label>
+                        <label for="password">🔑 密码 <span id="passwordRequiredLabel">*</span></label>
                         <div class="input-group">
-                            <input type="password" id="password" class="form-control" required placeholder="输入密码" autocomplete="new-password">
+                            <input type="password" id="password" class="form-control" placeholder="输入密码或留空保持不变" autocomplete="new-password">
                             <div class="input-group-append">
                                 <button type="button" class="toggle-btn" onclick="togglePasswordVisibility('password')">
                                     <i class="fas fa-eye"></i>
                                 </button>
                             </div>
                         </div>
+                        <small id="passwordHint" class="hidden" style="color: var(--text-secondary); margin-top: 0.5rem; display: block;">
+                            编辑模式：留空表示不修改密码
+                        </small>
                     </div>
                     
                     <!-- 密码生成器 -->
@@ -3459,8 +3590,8 @@ function getHTML5() {
                         <textarea id="notes" class="form-control" rows="3" placeholder="添加备注信息..."></textarea>
                     </div>
                     <div class="flex gap-4 mt-4">
-                        <button type="submit" class="btn btn-primary w-full">
-                            <i class="fas fa-save"></i> 保存密码
+                        <button type="submit" class="btn btn-primary w-full" id="submitBtn">
+                            <i class="fas fa-save"></i> 保存
                         </button>
                         <button type="button" class="btn btn-secondary" onclick="clearForm()">
                             <i class="fas fa-eraser"></i> 清空表单
@@ -3652,6 +3783,14 @@ function getHTML5() {
             document.getElementById('url').addEventListener('blur', checkForDuplicates);
             document.getElementById('username').addEventListener('blur', checkForDuplicates);
             
+            // 新分类输入框回车事件
+            document.getElementById('newCategoryInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addCategory();
+                }
+            });
+            
             document.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape') {
                     hideDuplicateWarning();
@@ -3662,6 +3801,104 @@ function getHTML5() {
                     document.getElementById('searchInput').focus();
                 }
             });
+        }
+
+        // 添加分类
+        async function addCategory() {
+            const input = document.getElementById('newCategoryInput');
+            const categoryName = input.value.trim();
+            
+            if (!categoryName) {
+                showNotification('请输入分类名称', 'warning');
+                return;
+            }
+            
+            if (categoryName.length > 20) {
+                showNotification('分类名称不能超过20个字符', 'warning');
+                return;
+            }
+            
+            if (categories.includes(categoryName)) {
+                showNotification('该分类已存在', 'warning');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/categories', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({
+                        action: 'add',
+                        category: categoryName
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    input.value = '';
+                    showNotification('分类已添加 🏷️');
+                    await loadCategories();
+                } else {
+                    showNotification('添加分类失败', 'error');
+                }
+            } catch (error) {
+                console.error('添加分类失败:', error);
+                showNotification('添加分类失败', 'error');
+            }
+        }
+
+        // 删除分类
+        async function removeCategory(categoryName) {
+            if (!confirm(\`确定要删除分类"\${categoryName}"吗？\`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/categories', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({
+                        action: 'remove',
+                        category: categoryName
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification('分类已删除 🗑️');
+                    await loadCategories();
+                } else {
+                    showNotification('删除分类失败', 'error');
+                }
+            } catch (error) {
+                console.error('删除分类失败:', error);
+                showNotification('删除分类失败', 'error');
+            }
+        }
+
+        // 渲染分类标签
+        function renderCategoryTags() {
+            const container = document.getElementById('categoryTags');
+            
+            if (categories.length === 0) {
+                container.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.875rem;">暂无自定义分类</p>';
+                return;
+            }
+            
+            container.innerHTML = categories.map(category => \`
+                <div class="category-tag">
+                    <span>\${category}</span>
+                    <button type="button" class="remove-btn" onclick="removeCategory('\${category}')" title="删除分类">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            \`).join('');
         }
 
         // 检查重复账户
@@ -3731,6 +3968,8 @@ function getHTML5() {
                 loadPasswords(1);
             } else if (tabName === 'backup') {
                 loadWebDAVConfig();
+            } else if (tabName === 'add-password') {
+                loadCategories();
             }
         }
 
@@ -3898,7 +4137,7 @@ function getHTML5() {
             }
         }
 
-        // 加载分类
+        // 加载分类 - 修正版本，支持自动提取分类
         async function loadCategories() {
             try {
                 const response = await fetch('/api/categories', {
@@ -3909,6 +4148,7 @@ function getHTML5() {
                 
                 categories = await response.json();
                 updateCategorySelects();
+                renderCategoryTags();
             } catch (error) {
                 console.error('Failed to load categories:', error);
             }
@@ -4323,7 +4563,7 @@ function getHTML5() {
             }
         }
 
-        // 编辑密码
+        // 编辑密码 - 改进版本，支持可选密码
         function editPassword(passwordId) {
             const password = passwords.find(p => p.id === passwordId);
             if (!password) return;
@@ -4332,7 +4572,7 @@ function getHTML5() {
             
             document.getElementById('siteName').value = password.siteName;
             document.getElementById('username').value = password.username;
-            document.getElementById('password').value = '';
+            document.getElementById('password').value = ''; // 编辑时密码留空
             document.getElementById('category').value = password.category || '';
             document.getElementById('url').value = password.url || '';
             document.getElementById('notes').value = password.notes || '';
@@ -4343,9 +4583,32 @@ function getHTML5() {
             // 切换到添加密码标签页
             switchTab('add-password');
             
-            // 更新按钮文本
-            const submitBtn = document.querySelector('#passwordForm button[type="submit"]');
-            submitBtn.innerHTML = '<i class="fas fa-save"></i> 更新密码';
+            // 更新UI状态
+            updateEditModeUI();
+        }
+
+        // 更新编辑模式UI
+        function updateEditModeUI() {
+            const submitBtn = document.getElementById('submitBtn');
+            const passwordRequiredLabel = document.getElementById('passwordRequiredLabel');
+            const passwordHint = document.getElementById('passwordHint');
+            const passwordField = document.getElementById('password');
+            
+            if (editingPasswordId) {
+                // 编辑模式
+                submitBtn.innerHTML = '<i class="fas fa-save"></i> 保存';
+                passwordRequiredLabel.textContent = '';
+                passwordHint.classList.remove('hidden');
+                passwordField.required = false;
+                passwordField.placeholder = '留空表示不修改密码';
+            } else {
+                // 新建模式
+                submitBtn.innerHTML = '<i class="fas fa-save"></i> 保存';
+                passwordRequiredLabel.textContent = '*';
+                passwordHint.classList.add('hidden');
+                passwordField.required = true;
+                passwordField.placeholder = '输入密码';
+            }
         }
 
         // 删除密码 - 支持分页
@@ -4372,18 +4635,23 @@ function getHTML5() {
             }
         }
 
-        // 处理密码表单提交 - 改进版本，处理重复检查
+        // 处理密码表单提交 - 改进版本，支持可选密码
         async function handlePasswordSubmit(e) {
             e.preventDefault();
             
             const formData = {
                 siteName: document.getElementById('siteName').value,
                 username: document.getElementById('username').value,
-                password: document.getElementById('password').value,
                 category: document.getElementById('category').value,
                 url: document.getElementById('url').value,
                 notes: document.getElementById('notes').value
             };
+            
+            // 只有在密码字段有值时才包含密码
+            const passwordValue = document.getElementById('password').value;
+            if (passwordValue || !editingPasswordId) {
+                formData.password = passwordValue;
+            }
             
             // 如果是编辑模式，添加ID
             if (editingPasswordId) {
@@ -4407,6 +4675,8 @@ function getHTML5() {
                     showNotification(editingPasswordId ? '密码已更新 ✅' : '密码已添加 ✅');
                     clearForm();
                     loadPasswords(currentPage, searchQuery, categoryFilter);
+                    // 重新加载分类以包含新添加的分类
+                    loadCategories();
                 } else if (response.status === 409) {
                     // 处理重复冲突
                     const result = await response.json();
@@ -4420,16 +4690,15 @@ function getHTML5() {
             }
         }
 
-        // 清空表单
+        // 清空表单 - 改进版本
         function clearForm() {
             document.getElementById('passwordForm').reset();
             document.getElementById('lengthValue').textContent = '16';
             editingPasswordId = null;
             hideDuplicateWarning();
             
-            // 恢复按钮文本
-            const submitBtn = document.querySelector('#passwordForm button[type="submit"]');
-            submitBtn.innerHTML = '<i class="fas fa-save"></i> 保存密码';
+            // 重置UI状态
+            updateEditModeUI();
         }
 
         // 生成密码
@@ -4799,6 +5068,8 @@ function getHTML5() {
                         document.getElementById('encryptedImportForm').classList.add('hidden');
                         selectedFile = null;
                         loadPasswords(currentPage, searchQuery, categoryFilter);
+                        // 重新加载分类以包含导入的分类
+                        loadCategories();
                     } else {
                         showNotification(result.error || '导入失败', 'error');
                     }
@@ -4860,6 +5131,11 @@ function getHTML5() {
                 }, 300);
             }, 3000);
         }
+
+        // 页面加载完成后初始化编辑模式UI
+        document.addEventListener('DOMContentLoaded', function() {
+            updateEditModeUI();
+        });
     </script>
 </body>
 </html>`;
