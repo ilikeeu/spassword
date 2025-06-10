@@ -2,21 +2,6 @@
 注意修改tampermonkey代码.js里面的密码管理系统地址
 # 🔐 密码管理器 Pro - 完整说明文档
 
-## 📋 目录
-
-  - [🎯 项目概述](https://www.google.com/search?q=%23-%E9%A1%B9%E7%9B%AE%E6%A6%82%E8%BF%B0)
-      - [🌟 核心优势](https://www.google.com/search?q=%23-%E6%A0%B8%E5%BF%83%E4%BC%98%E5%8A%BF)
-  - [✨ 功能特性](https://www.google.com/search?q=%23-%E5%8A%9F%E8%83%BD%E7%89%B9%E6%80%A7)
-  - [🚀 部署指南](https://www.google.com/search?q=%23-%E9%83%A8%E7%BD%B2%E6%8C%87%E5%8D%97)
-  - [⚙️ 配置说明](https://www.google.com/search?q=%23%EF%B8%8F-%E9%85%8D%E7%BD%AE%E8%AF%B4%E6%98%8E)
-  - [🔧 Tampermonkey扩展](https://www.google.com/search?q=%23-tampermonkey%E6%89%A9%E5%B1%95)
-  - [📖 API文档](https://www.google.com/search?q=%23-api%E6%96%87%E6%A1%A3)
-  - [📚 使用教程](https://www.google.com/search?q=%23-%E4%BD%BF%E7%94%A8%E6%95%99%E7%A8%8B)
-  - [🔒 安全说明](https://www.google.com/search?q=%23-%E5%AE%89%E5%85%A8%E8%AF%B4%E6%98%8E)
-  - [🛠️ 故障排除](https://www.google.com/search?q=%23%EF%B8%8F-%E6%95%85%E9%9A%9C%E6%8E%92%E9%99%A4)
-  - [📝 更新日志](https://www.google.com/search?q=%23-%E6%9B%B4%E6%96%B0%E6%97%A5%E5%BF%97)
-  - [📞 支持与反馈](https://www.google.com/search?q=%23-%E6%94%AF%E6%8C%81%E4%B8%8E%E5%8F%8D%E9%A6%88)
-
 ## 🎯 项目概述
 
 **密码管理器 Pro** 是一个基于 Cloudflare Workers 的现代化密码管理解决方案，提供安全的密码存储、智能自动填充、云备份同步等功能。
