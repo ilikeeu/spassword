@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         智能密码管理助手 Pro - 修正版
-// @namespace    https://修改为你的密码管理中心地址/
-// @version      2.1.1
+// @namespace    https://修改为你的密码管理系统地址/
+// @version      2.1.2
 // @description  自动检测和填充密码，支持多账户切换、密码变更检测和历史记录管理。修正相同账号不同密码的处理逻辑，不会保存为新账号，只提示是否更新现有账号。
 // @author       Password Manager Pro
 // @match        *://*/*
@@ -20,7 +20,7 @@
 
     // 配置
     const CONFIG = {
-        API_BASE: 'https://修改为你的密码管理中心地址',
+        API_BASE: 'https://修改为你的密码管理系统地址',
         STORAGE_KEY: 'password_manager_token',
         AUTO_SAVE: true,
         AUTO_FILL: true,
@@ -114,8 +114,7 @@
         }
     }
 
-    // [修正] 显示密码历史模态框
-    // 使用事件委托（Event Delegation）代替内联 onclick，以兼容有严格内容安全策略（CSP）的网站。
+    // 显示密码历史模态框
     function showPasswordHistoryModal(history, passwordId) {
         const modal = document.createElement('div');
         modal.className = 'pm-password-history-modal';
@@ -210,18 +209,14 @@
 
         modal.addEventListener('click', (e) => {
             const target = e.target;
-            const content = target.closest('.pm-modal-content');
 
-            // 检查是否点击了遮罩层（但在内容区域之外）
-            if (target.matches('.pm-modal-overlay') && !content) {
-                closeModal();
-                return;
-            }
-
-            // 检查是否点击了关闭按钮
-            if (target.closest('.pm-close-btn')) {
-                closeModal();
-                return;
+            // 检查是否点击了遮罩层或关闭按钮
+            if (target.matches('.pm-modal-overlay') || target.closest('.pm-close-btn')) {
+                // 确保点击的不是内容区域
+                if (!target.closest('.pm-modal-content') || target.closest('.pm-close-btn')) {
+                    closeModal();
+                    return;
+                }
             }
 
             // 检查是否点击了切换密码可见性按钮
@@ -1190,9 +1185,6 @@
             width: 100%;
             height: 100%;
             z-index: 10002;
-            display: flex;
-            align-items: center;
-            justify-content: center;
         }
 
         .pm-modal-overlay {
@@ -1203,6 +1195,10 @@
             height: 100%;
             background: rgba(0, 0, 0, 0.5);
             backdrop-filter: blur(5px);
+            /* [修正] 使用 Flexbox 将内容居中 */
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .pm-modal-content {
