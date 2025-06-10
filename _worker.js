@@ -1,4 +1,4 @@
-// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能
+// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能 + 密码历史管理
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -43,7 +43,14 @@ export default {
         if (path.endsWith('/reveal')) {
           return getActualPassword(request, env, corsHeaders);
         }
+        if (path.endsWith('/history')) {
+          return handlePasswordHistory(request, env, corsHeaders);
+        }
         return handlePasswords(request, env, corsHeaders);
+      }
+      
+      if (path === '/api/passwords/restore') {
+        return handleRestorePassword(request, env, corsHeaders);
       }
       
       if (path.startsWith('/api/categories')) {
@@ -66,7 +73,7 @@ export default {
         return handleWebDAV(request, env, corsHeaders);
       }
       
-      // 登录检测和保存API - 改进版本
+      // 登录检测和保存API - 修正版本
       if (path === '/api/detect-login') {
         return handleDetectLogin(request, env, corsHeaders);
       }
@@ -79,6 +86,11 @@ export default {
       // 账户去重检查API
       if (path === '/api/check-duplicate') {
         return handleCheckDuplicate(request, env, corsHeaders);
+      }
+      
+      // 更新现有密码API
+      if (path === '/api/update-existing-password') {
+        return handleUpdateExistingPassword(request, env, corsHeaders);
       }
       
       // 新增：获取用户信息API
@@ -100,7 +112,7 @@ export default {
 // OAuth登录处理
 async function handleOAuthLogin(request, env, corsHeaders) {
   const state = generateRandomString(32);
-  const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth/authorize`);
+  const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth2/authorize`);
   
   authUrl.searchParams.set('client_id', env.OAUTH_CLIENT_ID);
   authUrl.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
@@ -137,7 +149,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
   await env.PASSWORD_KV.delete(`oauth_state_${state}`);
   
   try {
-    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth/token`, {
+    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth2/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -169,7 +181,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     
     const userData = await userResponse.json();
     
-    // 检查用户授权 - 新增功能
+    // 检查用户授权
     if (env.OAUTH_ID && userData.id.toString() !== env.OAUTH_ID) {
       return new Response(`
         <!DOCTYPE html>
@@ -232,7 +244,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
       username: userData.username,
       nickname: userData.nickname,
       email: userData.email,
-      avatar: userData.avatar_url || 'https://yanxuan.nosdn.127.net/233a2a8170847d3287ec058c51cf60a9.jpg',
+      avatar: userData.avatar_template || 'https://yanxuan.nosdn.127.net/233a2a8170847d3287ec058c51cf60a9.jpg',
       loginAt: new Date().toISOString()
     };
     
@@ -360,7 +372,133 @@ async function handleLogout(request, env, corsHeaders) {
   });
 }
 
-// 密码条目处理 - 增加分页功能
+// 密码历史记录功能
+async function savePasswordHistory(existingPassword, userId, env) {
+  const historyEntry = {
+    id: generateId(),
+    passwordId: existingPassword.id,
+    oldPassword: existingPassword.password, // 已加密
+    changedAt: new Date().toISOString(),
+    reason: 'password_update'
+  };
+  
+  // 保存到历史记录（保留最近5次变更）
+  const historyKey = `password_history_${userId}_${existingPassword.id}`;
+  const existingHistory = await env.PASSWORD_KV.get(historyKey);
+  let history = existingHistory ? JSON.parse(existingHistory) : [];
+  
+  history.unshift(historyEntry);
+  if (history.length > 5) {
+    history = history.slice(0, 5); // 只保留最近5次
+  }
+  
+  await env.PASSWORD_KV.put(historyKey, JSON.stringify(history));
+}
+
+// 获取密码历史记录API
+async function handlePasswordHistory(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const url = new URL(request.url);
+  const pathParts = url.pathname.split('/');
+  const passwordId = pathParts[pathParts.length - 2]; // 获取密码ID
+  const userId = session.userId;
+  
+  try {
+    const historyData = await env.PASSWORD_KV.get(`password_history_${userId}_${passwordId}`);
+    const history = historyData ? JSON.parse(historyData) : [];
+    
+    // 解密历史密码
+    const decryptedHistory = await Promise.all(
+      history.map(async (entry) => ({
+        ...entry,
+        oldPassword: await decryptPassword(entry.oldPassword, userId)
+      }))
+    );
+    
+    return new Response(JSON.stringify({ history: decryptedHistory }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取历史记录失败' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// 恢复历史密码API
+async function handleRestorePassword(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const { passwordId, historyId } = await request.json();
+  const userId = session.userId;
+  
+  try {
+    // 获取当前密码
+    const currentPasswordData = await env.PASSWORD_KV.get(`password_${userId}_${passwordId}`);
+    if (!currentPasswordData) {
+      return new Response(JSON.stringify({ error: '密码不存在' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const currentPassword = JSON.parse(currentPasswordData);
+    
+    // 获取历史记录
+    const historyData = await env.PASSWORD_KV.get(`password_history_${userId}_${passwordId}`);
+    const history = historyData ? JSON.parse(historyData) : [];
+    
+    const historyEntry = history.find(h => h.id === historyId);
+    if (!historyEntry) {
+      return new Response(JSON.stringify({ error: '历史记录不存在' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    // 保存当前密码到历史记录
+    await savePasswordHistory(currentPassword, userId, env);
+    
+    // 恢复历史密码
+    const updatedPassword = {
+      ...currentPassword,
+      password: historyEntry.oldPassword, // 历史密码已经是加密的
+      updatedAt: new Date().toISOString(),
+      restoredFrom: historyEntry.id
+    };
+    
+    await env.PASSWORD_KV.put(`password_${userId}_${passwordId}`, JSON.stringify(updatedPassword));
+    
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: '密码已恢复到历史版本' 
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+    
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '恢复密码失败' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// 密码条目处理 - 增加分页功能和历史记录
 async function handlePasswords(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -459,18 +597,36 @@ async function handlePasswords(request, env, corsHeaders) {
     case 'POST':
       const newPassword = await request.json();
       
-      // 检查重复 - 改进版本
-      const duplicateCheck = await checkForDuplicates(newPassword, userId, env);
+      // 检查重复 - 修正版本：相同账号不同密码不保存为新账号
+      const duplicateCheck = await checkForDuplicates(newPassword, userId, env, true);
       if (duplicateCheck.isDuplicate) {
-        return new Response(JSON.stringify({
-          error: '检测到重复账户',
-          duplicate: true,
-          existing: duplicateCheck.existing,
-          message: `该网站已存在相同用户名的账户：${duplicateCheck.existing.siteName} - ${duplicateCheck.existing.username}`
-        }), {
-          status: 409, // Conflict
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+        if (duplicateCheck.isIdentical) {
+          return new Response(JSON.stringify({
+            error: '检测到完全相同的账户',
+            duplicate: true,
+            identical: true,
+            existing: duplicateCheck.existing,
+            message: '该账户已存在且密码相同：' + duplicateCheck.existing.siteName + ' - ' + duplicateCheck.existing.username
+          }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        } else if (duplicateCheck.passwordChanged) {
+          // 相同账号不同密码：不保存为新账号，而是返回更新提示
+          return new Response(JSON.stringify({
+            error: '检测到相同账号的密码变更',
+            duplicate: true,
+            passwordChanged: true,
+            existing: duplicateCheck.existing,
+            newPassword: newPassword.password,
+            message: '检测到相同账号的密码变更，是否更新现有账户的密码？',
+            updateAction: 'update_password',
+            shouldUpdate: true // 标记为应该更新而不是新建
+          }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
       }
       
       newPassword.id = generateId();
@@ -515,11 +671,21 @@ async function handlePasswords(request, env, corsHeaders) {
       }
       
       const updateData = await request.json();
-      const updatedPassword = { ...JSON.parse(existingPassword), ...updateData };
+      const existingPasswordData = JSON.parse(existingPassword);
+      const updatedPassword = { ...existingPasswordData, ...updateData };
       updatedPassword.updatedAt = new Date().toISOString();
       
+      // 如果密码发生变更，保存历史记录
       if (updateData.password) {
-        updatedPassword.password = await encryptPassword(updateData.password, userId);
+        const newEncryptedPassword = await encryptPassword(updateData.password, userId);
+        const oldDecryptedPassword = await decryptPassword(existingPasswordData.password, userId);
+        
+        if (oldDecryptedPassword !== updateData.password) {
+          // 保存历史记录
+          await savePasswordHistory(existingPasswordData, userId, env);
+        }
+        
+        updatedPassword.password = newEncryptedPassword;
       }
       
       await env.PASSWORD_KV.put(`password_${userId}_${id}`, JSON.stringify(updatedPassword));
@@ -538,7 +704,9 @@ async function handlePasswords(request, env, corsHeaders) {
         });
       }
       
+      // 删除密码和相关历史记录
       await env.PASSWORD_KV.delete(`password_${userId}_${id}`);
+      await env.PASSWORD_KV.delete(`password_history_${userId}_${id}`);
       
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -552,7 +720,7 @@ async function handlePasswords(request, env, corsHeaders) {
   }
 }
 
-// 检查重复账户 - 改进版本：只检查完全相同的账户（URL+用户名+密码）
+// 检查重复账户 - 修正版本：包括密码检查
 async function checkForDuplicates(newPassword, userId, env, checkPassword = false) {
   if (!newPassword.url || !newPassword.username) {
     return { isDuplicate: false };
@@ -647,11 +815,64 @@ async function handleCheckDuplicate(request, env, corsHeaders) {
   const data = await request.json();
   const userId = session.userId;
   
-  const duplicateCheck = await checkForDuplicates(data, userId, env, false);
+  const duplicateCheck = await checkForDuplicates(data, userId, env, true);
   
   return new Response(JSON.stringify(duplicateCheck), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders }
   });
+}
+
+// 新增：更新现有密码API
+async function handleUpdateExistingPassword(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const { passwordId, newPassword } = await request.json();
+  const userId = session.userId;
+  
+  try {
+    // 获取现有密码
+    const existingPasswordData = await env.PASSWORD_KV.get(`password_${userId}_${passwordId}`);
+    if (!existingPasswordData) {
+      return new Response(JSON.stringify({ error: '密码不存在' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const existingPassword = JSON.parse(existingPasswordData);
+    
+    // 保存历史记录
+    await savePasswordHistory(existingPassword, userId, env);
+    
+    // 更新密码
+    const updatedPassword = {
+      ...existingPassword,
+      password: await encryptPassword(newPassword, userId),
+      updatedAt: new Date().toISOString(),
+      updatedReason: 'password_change_detected'
+    };
+    
+    await env.PASSWORD_KV.put(`password_${userId}_${passwordId}`, JSON.stringify(updatedPassword));
+    
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: '密码已更新，旧密码已保存到历史记录' 
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+    
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '更新密码失败' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
 }
 
 // 获取实际密码
@@ -1271,7 +1492,7 @@ async function handleWebDAVList(request, env, corsHeaders, session) {
   }
 }
 
-// 登录检测API - 改进版本，智能处理重复和密码变更
+// 登录检测API - 修正版本，智能处理重复和密码变更
 async function handleDetectLogin(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -1298,19 +1519,20 @@ async function handleDetectLogin(request, env, corsHeaders) {
           exists: true,
           identical: true,
           password: duplicateCheck.existing,
-          message: `账户已存在且密码相同：${duplicateCheck.existing.siteName} - ${duplicateCheck.existing.username}`
+          message: '账户已存在且密码相同：' + duplicateCheck.existing.siteName + ' - ' + duplicateCheck.existing.username
         }), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders }
         });
       } else if (duplicateCheck.passwordChanged) {
-        // 相同网站和用户名，但密码不同 - 询问是否更新
+        // 相同网站和用户名，但密码不同 - 询问是否更新，不保存为新账号
         return new Response(JSON.stringify({ 
           exists: true,
           passwordChanged: true,
           existing: duplicateCheck.existing,
           newPassword: password,
-          message: `检测到密码变更，是否更新保存的密码？`,
-          updateAction: 'update_password'
+          message: '检测到相同账号的密码变更，是否更新现有账户的密码？',
+          updateAction: 'update_password',
+          shouldUpdate: true // 标记为应该更新而不是新建
         }), {
           status: 200, // 不是错误，而是需要用户确认
           headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -1592,7 +1814,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5界面 - 增加分页功能
+// HTML5界面 - 增加密码历史功能
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1956,66 +2178,98 @@ function getHTML5() {
             border-color: var(--primary-color);
         }
 
-        /* 密码网格 */
-        .passwords-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(23.75rem, 1fr));
-            gap: 1.5rem;
-        }
-
-        /* 密码卡片 */
-        .password-card {
+        /* 密码网格 - 改为列表形式 */
+        .passwords-list {
             background: var(--card-background);
             backdrop-filter: blur(20px);
             border-radius: var(--border-radius-xl);
-            padding: 1.75rem;
             box-shadow: var(--shadow-lg);
-            transition: all var(--transition-normal);
-            position: relative;
             border: 1px solid rgba(255, 255, 255, 0.2);
             overflow: hidden;
         }
 
-        .password-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+        /* 密码条目 - 列表形式 */
+        .password-item {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            transition: all var(--transition-normal);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: white;
         }
 
-        .password-card:hover {
-            transform: translateY(-8px);
-            box-shadow: var(--shadow-xl);
+        .password-item:last-child {
+            border-bottom: none;
         }
 
-        .password-header {
+        .password-item:hover {
+            background: #f8fafc;
+            transform: translateX(4px);
+        }
+
+        .password-item-content {
             display: flex;
             align-items: center;
             gap: 1rem;
-            margin-bottom: 1.5rem;
+            flex: 1;
         }
 
-        .site-icon {
-            width: 3.5rem;
-            height: 3.5rem;
+        .password-item-icon {
+            width: 3rem;
+            height: 3rem;
             border-radius: var(--border-radius-lg);
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 1.5rem;
+            font-size: 1.25rem;
             box-shadow: var(--shadow-md);
+            flex-shrink: 0;
         }
 
-        .password-meta h3 {
-            color: var(--text-primary);
-            margin-bottom: 0.5rem;
-            font-size: 1.25rem;
+        .password-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .password-item-title {
             font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+            font-size: 1.125rem;
+        }
+
+        .password-item-username {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 0.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .password-item-url {
+            color: var(--info-color);
+            font-size: 0.75rem;
+            text-decoration: none;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .password-item-url:hover {
+            text-decoration: underline;
+        }
+
+        .password-item-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.5rem;
+            margin-right: 1rem;
+            flex-shrink: 0;
         }
 
         .category-badge {
@@ -2025,49 +2279,27 @@ function getHTML5() {
             border-radius: var(--border-radius-xl);
             font-size: 0.75rem;
             font-weight: 600;
-            display: inline-block;
+            white-space: nowrap;
         }
 
-        .password-field {
-            margin: 1rem 0;
+        .password-item-date {
+            font-size: 0.75rem;
+            color: var(--text-muted);
         }
 
-        .password-field label {
-            display: block;
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-            font-weight: 600;
-            margin-bottom: 0.375rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .password-field .value {
-            color: var(--text-primary);
-            font-size: 1rem;
-            word-break: break-all;
-            font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
-        }
-
-        .password-field .value a {
-            color: var(--primary-color);
-            text-decoration: none;
-        }
-
-        .password-field .value a:hover {
-            text-decoration: underline;
-        }
-
-        .password-actions {
+        .password-item-actions {
             display: flex;
             gap: 0.5rem;
-            margin-top: 1.5rem;
-            flex-wrap: wrap;
+            flex-shrink: 0;
         }
 
-        .password-actions .btn {
-            flex: 1;
-            min-width: 5rem;
+        .password-item-actions .btn {
+            padding: 0.5rem;
+            border-radius: 50%;
+            width: 2.5rem;
+            height: 2.5rem;
+            display: flex;
+            align-items: center;
             justify-content: center;
         }
 
@@ -2289,9 +2521,170 @@ function getHTML5() {
             font-size: 0.875rem;
         }
 
+        /* 密码变更确认对话框样式 */
+        .password-change-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+        
+        .modal-content {
+            position: relative;
+            background: white;
+            border-radius: var(--border-radius-xl);
+            padding: 2rem;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: var(--shadow-xl);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            color: var(--text-primary);
+            text-align: center;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 50%;
+            transition: all var(--transition-normal);
+        }
+
+        .close-btn:hover {
+            background: var(--border-color);
+            color: var(--text-primary);
+        }
+        
+        .modal-body {
+            margin: 1.5rem 0;
+        }
+        
+        .password-comparison {
+            background: var(--light-color);
+            border-radius: var(--border-radius-lg);
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .password-item {
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .password-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .password-item label {
+            font-weight: 600;
+            min-width: 150px;
+            font-size: 0.875rem;
+        }
+        
+        .password-value {
+            flex: 1;
+            padding: 0.5rem;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius-sm);
+            font-family: monospace;
+        }
+        
+        .modal-warning {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: var(--border-radius-lg);
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .modal-warning p {
+            margin: 0 0 0.5rem 0;
+            font-weight: 600;
+            color: #92400e;
+        }
+        
+        .modal-warning ul {
+            margin: 0;
+            padding-left: 1.5rem;
+            color: #92400e;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* 密码历史记录样式 */
+        .history-item {
+            background: var(--light-color);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius-lg);
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .history-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .history-date {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .history-password {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .history-password label {
+            font-weight: 600;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
         /* 空状态 */
         .empty-state {
-            grid-column: 1 / -1;
             text-align: center;
             padding: 5rem 1.25rem;
             color: var(--text-secondary);
@@ -2393,12 +2786,24 @@ function getHTML5() {
                 min-width: auto;
             }
             
-            .passwords-grid {
-                grid-template-columns: 1fr;
+            .password-item {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 1rem;
             }
             
-            .password-actions {
+            .password-item-content {
                 flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .password-item-meta {
+                align-items: flex-start;
+                margin-right: 0;
+            }
+            
+            .password-item-actions {
+                justify-content: center;
             }
 
             .generator-options {
@@ -2423,6 +2828,24 @@ function getHTML5() {
             
             .pagination-controls {
                 justify-content: center;
+            }
+
+            .modal-content {
+                margin: 1rem;
+                max-width: none;
+            }
+            
+            .password-item {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .password-item label {
+                min-width: auto;
+            }
+            
+            .modal-actions {
+                flex-direction: column;
             }
         }
 
@@ -2539,8 +2962,8 @@ function getHTML5() {
 
             <!-- 密码列表 -->
             <main>
-                <section class="passwords-grid" id="passwordsGrid">
-                    <!-- 密码卡片将在这里动态生成 -->
+                <section class="passwords-list" id="passwordsList">
+                    <!-- 密码条目将在这里动态生成 -->
                 </section>
                 <!-- 分页容器将在这里动态生成 -->
             </main>
@@ -2643,7 +3066,7 @@ function getHTML5() {
                     <h4><i class="fas fa-cog"></i> 连接配置</h4>
                     <div class="form-group">
                         <label for="webdavUrl">🌐 WebDAV 地址</label>
-                        <input type="url" id="webdavUrl" class="form-control" placeholder="https://webdav.teracloud.jp/dav/" autocomplete="url">
+                        <input type="url" id="webdavUrl" class="form-control" placeholder="webdav地址" autocomplete="url">
                         <small style="color: var(--text-secondary); margin-top: 0.5rem; display: block;">
                             支持 TeraCloud、坚果云、NextCloud 等 WebDAV 服务
                         </small>
@@ -2798,6 +3221,7 @@ function getHTML5() {
             document.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape') {
                     hideDuplicateWarning();
+                    closePasswordHistoryModal();
                 }
                 if (e.ctrlKey && e.key === 'k') {
                     e.preventDefault();
@@ -2844,7 +3268,7 @@ function getHTML5() {
             const warning = document.getElementById('duplicateWarning');
             const message = document.getElementById('duplicateMessage');
             
-            message.textContent = \`该网站已存在相同用户名的账户：\${existing.siteName} - \${existing.username}\`;
+            message.textContent = '该网站已存在相同用户名的账户：' + existing.siteName + ' - ' + existing.username;
             warning.classList.remove('hidden');
         }
 
@@ -2939,7 +3363,7 @@ function getHTML5() {
                 
                 const avatar = document.getElementById('userAvatar');
                 if (currentUser.avatar) {
-                    avatar.innerHTML = \`<img src="\${currentUser.avatar}" alt="用户头像">\`;
+                    avatar.innerHTML = '<img src="' + currentUser.avatar + '" alt="用户头像">';
                 } else {
                     avatar.innerHTML = displayName.charAt(0).toUpperCase();
                 }
@@ -2969,7 +3393,7 @@ function getHTML5() {
                 if (search) params.append('search', search);
                 if (category) params.append('category', category);
                 
-                const response = await fetch(\`/api/passwords?\${params}\`, {
+                const response = await fetch('/api/passwords?' + params, {
                     headers: {
                         'Authorization': 'Bearer ' + authToken
                     }
@@ -3017,78 +3441,60 @@ function getHTML5() {
             categorySelect.innerHTML = '<option value="">选择分类</option>';
             
             categories.forEach(category => {
-                categoryFilterSelect.innerHTML += \`<option value="\${category}">🏷️ \${category}</option>\`;
-                categorySelect.innerHTML += \`<option value="\${category}">\${category}</option>\`;
+                categoryFilterSelect.innerHTML += '<option value="' + category + '">🏷️ ' + category + '</option>';
+                categorySelect.innerHTML += '<option value="' + category + '">' + category + '</option>';
             });
         }
 
-        // 渲染密码列表
+        // 渲染密码列表 - 列表形式
         function renderPasswords() {
-            const grid = document.getElementById('passwordsGrid');
+            const list = document.getElementById('passwordsList');
             
             if (passwords.length === 0) {
-                grid.innerHTML = \`
-                    <div class="empty-state">
-                        <div class="icon">🔑</div>
-                        <h3>没有找到密码</h3>
-                        <p>\${searchQuery || categoryFilter ? '尝试调整搜索条件或清空筛选' : '点击"添加密码"标签页开始管理您的密码吧！'}</p>
-                    </div>
-                \`;
+                list.innerHTML = '<div class="empty-state"><div class="icon">🔑</div><h3>没有找到密码</h3><p>' + (searchQuery || categoryFilter ? '尝试调整搜索条件或清空筛选' : '点击"添加密码"标签页开始管理您的密码吧！') + '</p></div>';
                 return;
             }
             
-            grid.innerHTML = passwords.map(password => \`
-                <article class="password-card">
-                    <header class="password-header">
-                        <div class="site-icon">
-                            <i class="fas fa-globe"></i>
-                        </div>
-                        <div class="password-meta">
-                            <h3>\${password.siteName}</h3>
-                            \${password.category ? \`<span class="category-badge">\${password.category}</span>\` : ''}
-                        </div>
-                    </header>
-                    
-                    <div class="password-field">
-                        <label>👤 用户名</label>
-                        <div class="value">\${password.username}</div>
-                    </div>
-                    
-                    <div class="password-field">
-                        <label>🔑 密码</label>
-                        <div class="value" id="pwd-\${password.id}">••••••••</div>
-                    </div>
-                    
-                    \${password.url ? \`
-                        <div class="password-field">
-                            <label>🔗 网址</label>
-                            <div class="value"><a href="\${password.url}" target="_blank" rel="noopener noreferrer">\${password.url}</a></div>
-                        </div>
-                    \` : ''}
-                    
-                    \${password.notes ? \`
-                        <div class="password-field">
-                            <label>📝 备注</label>
-                            <div class="value">\${password.notes}</div>
-                        </div>
-                    \` : ''}
-                    
-                    <footer class="password-actions">
-                        <button class="btn btn-secondary btn-sm" onclick="togglePasswordDisplay('\${password.id}')" type="button">
-                            <i class="fas fa-eye"></i>
-                        </button>
-                        <button class="btn btn-secondary btn-sm" onclick="copyPassword('\${password.id}')" type="button">
-                            <i class="fas fa-copy"></i>
-                        </button>
-                        <button class="btn btn-secondary btn-sm" onclick="editPassword('\${password.id}')" type="button">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="btn btn-danger btn-sm" onclick="deletePassword('\${password.id}')" type="button">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </footer>
-                </article>
-            \`).join('');
+            list.innerHTML = passwords.map(password => 
+                '<div class="password-item">' +
+                    '<div class="password-item-content">' +
+                        '<div class="password-item-icon">' +
+                            '<i class="fas fa-globe"></i>' +
+                        '</div>' +
+                        '<div class="password-item-info">' +
+                            '<div class="password-item-title">' + password.siteName + '</div>' +
+                            '<div class="password-item-username">' +
+                                '<i class="fas fa-user"></i>' +
+                                '<span>' + password.username + '</span>' +
+                            '</div>' +
+                            (password.url ? '<a href="' + password.url + '" target="_blank" rel="noopener noreferrer" class="password-item-url">' + password.url + '</a>' : '') +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="password-item-meta">' +
+                        (password.category ? '<span class="category-badge">' + password.category + '</span>' : '') +
+                        '<div class="password-item-date">' +
+                            new Date(password.updatedAt).toLocaleDateString() +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="password-item-actions">' +
+                        '<button class="btn btn-secondary btn-sm" onclick="togglePasswordDisplay(\'' + password.id + '\')" type="button" title="显示/隐藏密码">' +
+                            '<i class="fas fa-eye"></i>' +
+                        '</button>' +
+                        '<button class="btn btn-secondary btn-sm" onclick="copyPassword(\'' + password.id + '\')" type="button" title="复制密码">' +
+                            '<i class="fas fa-copy"></i>' +
+                        '</button>' +
+                        '<button class="btn btn-info btn-sm" onclick="showPasswordHistoryModal(\'' + password.id + '\')" type="button" title="密码历史">' +
+                            '<i class="fas fa-history"></i>' +
+                        '</button>' +
+                        '<button class="btn btn-secondary btn-sm" onclick="editPassword(\'' + password.id + '\')" type="button" title="编辑">' +
+                            '<i class="fas fa-edit"></i>' +
+                        '</button>' +
+                        '<button class="btn btn-danger btn-sm" onclick="deletePassword(\'' + password.id + '\')" type="button" title="删除">' +
+                            '<i class="fas fa-trash"></i>' +
+                        '</button>' +
+                    '</div>' +
+                '</div>'
+            ).join('');
         }
 
         // 渲染分页
@@ -3099,7 +3505,7 @@ function getHTML5() {
                 container = document.createElement('div');
                 container.id = 'paginationContainer';
                 container.className = 'pagination-container';
-                document.getElementById('passwordsGrid').parentNode.appendChild(container);
+                document.getElementById('passwordsList').parentNode.appendChild(container);
             }
             
             if (!pagination || pagination.totalPages <= 1) {
@@ -3107,21 +3513,11 @@ function getHTML5() {
                 return;
             }
             
-            let paginationHTML = \`
-                <div class="pagination">
-                    <div class="pagination-info">
-                        显示第 \${((pagination.page - 1) * pagination.limit) + 1}-\${Math.min(pagination.page * pagination.limit, pagination.total)} 条，共 \${pagination.total} 条
-                    </div>
-                    <div class="pagination-controls">
-            \`;
+            let paginationHTML = '<div class="pagination"><div class="pagination-info">显示第 ' + (((pagination.page - 1) * pagination.limit) + 1) + '-' + Math.min(pagination.page * pagination.limit, pagination.total) + ' 条，共 ' + pagination.total + ' 条</div><div class="pagination-controls">';
             
             // 上一页按钮
             if (pagination.hasPrev) {
-                paginationHTML += \`
-                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.page - 1}, '\${searchQuery}', '\${categoryFilter}')" type="button">
-                        <i class="fas fa-chevron-left"></i> 上一页
-                    </button>
-                \`;
+                paginationHTML += '<button class="btn btn-secondary btn-sm" onclick="loadPasswords(' + (pagination.page - 1) + ', \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button"><i class="fas fa-chevron-left"></i> 上一页</button>';
             }
             
             // 页码按钮
@@ -3129,47 +3525,30 @@ function getHTML5() {
             const endPage = Math.min(pagination.totalPages, pagination.page + 2);
             
             if (startPage > 1) {
-                paginationHTML += \`
-                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(1, '\${searchQuery}', '\${categoryFilter}')" type="button">1</button>
-                \`;
+                paginationHTML += '<button class="btn btn-secondary btn-sm" onclick="loadPasswords(1, \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button">1</button>';
                 if (startPage > 2) {
-                    paginationHTML += \`<span class="pagination-ellipsis">...</span>\`;
+                    paginationHTML += '<span class="pagination-ellipsis">...</span>';
                 }
             }
             
             for (let i = startPage; i <= endPage; i++) {
                 const isActive = i === pagination.page;
-                paginationHTML += \`
-                    <button class="btn \${isActive ? 'btn-primary' : 'btn-secondary'} btn-sm" 
-                            onclick="loadPasswords(\${i}, '\${searchQuery}', '\${categoryFilter}')" 
-                            type="button" \${isActive ? 'disabled' : ''}>
-                        \${i}
-                    </button>
-                \`;
+                paginationHTML += '<button class="btn ' + (isActive ? 'btn-primary' : 'btn-secondary') + ' btn-sm" onclick="loadPasswords(' + i + ', \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button"' + (isActive ? ' disabled' : '') + '>' + i + '</button>';
             }
             
             if (endPage < pagination.totalPages) {
                 if (endPage < pagination.totalPages - 1) {
-                    paginationHTML += \`<span class="pagination-ellipsis">...</span>\`;
+                    paginationHTML += '<span class="pagination-ellipsis">...</span>';
                 }
-                paginationHTML += \`
-                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.totalPages}, '\${searchQuery}', '\${categoryFilter}')" type="button">\${pagination.totalPages}</button>
-                \`;
+                paginationHTML += '<button class="btn btn-secondary btn-sm" onclick="loadPasswords(' + pagination.totalPages + ', \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button">' + pagination.totalPages + '</button>';
             }
             
             // 下一页按钮
             if (pagination.hasNext) {
-                paginationHTML += \`
-                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.page + 1}, '\${searchQuery}', '\${categoryFilter}')" type="button">
-                        下一页 <i class="fas fa-chevron-right"></i>
-                    </button>
-                \`;
+                paginationHTML += '<button class="btn btn-secondary btn-sm" onclick="loadPasswords(' + (pagination.page + 1) + ', \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button">下一页 <i class="fas fa-chevron-right"></i></button>';
             }
             
-            paginationHTML += \`
-                    </div>
-                </div>
-            \`;
+            paginationHTML += '</div></div>';
             
             container.innerHTML = paginationHTML;
         }
@@ -3190,12 +3569,12 @@ function getHTML5() {
 
         // 显示/隐藏密码
         async function togglePasswordDisplay(passwordId) {
-            const element = document.getElementById(\`pwd-\${passwordId}\`);
+            const element = document.getElementById('pwd-' + passwordId);
             const button = event.target.closest('button');
             
-            if (element.textContent === '••••••••') {
+            if (element && element.textContent === '••••••••') {
                 try {
-                    const response = await fetch(\`/api/passwords/\${passwordId}/reveal\`, {
+                    const response = await fetch('/api/passwords/' + passwordId + '/reveal', {
                         headers: {
                             'Authorization': 'Bearer ' + authToken
                         }
@@ -3207,16 +3586,30 @@ function getHTML5() {
                 } catch (error) {
                     showNotification('获取密码失败', 'error');
                 }
-            } else {
+            } else if (element) {
                 element.textContent = '••••••••';
                 button.innerHTML = '<i class="fas fa-eye"></i>';
+            } else {
+                // 如果没有密码显示元素，直接显示通知
+                try {
+                    const response = await fetch('/api/passwords/' + passwordId + '/reveal', {
+                        headers: {
+                            'Authorization': 'Bearer ' + authToken
+                        }
+                    });
+                    
+                    const data = await response.json();
+                    showNotification('密码：' + data.password, 'info');
+                } catch (error) {
+                    showNotification('获取密码失败', 'error');
+                }
             }
         }
 
         // 复制密码
         async function copyPassword(passwordId) {
             try {
-                const response = await fetch(\`/api/passwords/\${passwordId}/reveal\`, {
+                const response = await fetch('/api/passwords/' + passwordId + '/reveal', {
                     headers: {
                         'Authorization': 'Bearer ' + authToken
                     }
@@ -3227,6 +3620,98 @@ function getHTML5() {
                 showNotification('密码已复制到剪贴板 📋');
             } catch (error) {
                 showNotification('复制失败', 'error');
+            }
+        }
+
+        // 显示密码历史记录模态框
+        async function showPasswordHistoryModal(passwordId) {
+            try {
+                const response = await fetch('/api/passwords/' + passwordId + '/history', {
+                    headers: {
+                        'Authorization': 'Bearer ' + authToken
+                    }
+                });
+                
+                const data = await response.json();
+                const history = data.history || [];
+                
+                const modal = document.createElement('div');
+                modal.className = 'password-change-modal';
+                modal.id = 'passwordHistoryModal';
+                modal.innerHTML = '<div class="modal-overlay" onclick="closePasswordHistoryModal()"><div class="modal-content" onclick="event.stopPropagation()"><div class="modal-header"><h3>📜 密码历史记录</h3><button type="button" class="close-btn" onclick="closePasswordHistoryModal()"><i class="fas fa-times"></i></button></div><div class="modal-body">' + 
+                    (history.length === 0 ? 
+                      '<p class="text-center">暂无历史记录</p>' :
+                      history.map((entry, index) => 
+                        '<div class="history-item">' +
+                            '<div class="history-header">' +
+                                '<span class="history-date">' + new Date(entry.changedAt).toLocaleString() + '</span>' +
+                                '<button type="button" class="btn btn-success btn-sm" onclick="restorePassword(\'' + passwordId + '\', \'' + entry.id + '\')">🔄 恢复此密码</button>' +
+                            '</div>' +
+                            '<div class="history-password">' +
+                                '<label>密码：</label>' +
+                                '<span class="password-value" id="historyPwd' + index + '">••••••••</span>' +
+                                '<button type="button" class="btn btn-sm btn-secondary" onclick="toggleHistoryPassword(\'historyPwd' + index + '\', \'' + entry.oldPassword + '\')"><i class="fas fa-eye"></i></button>' +
+                            '</div>' +
+                        '</div>'
+                      ).join('')
+                    ) + 
+                    '</div></div></div>';
+                
+                document.body.appendChild(modal);
+                
+            } catch (error) {
+                showNotification('获取密码历史失败', 'error');
+            }
+        }
+
+        // 关闭密码历史模态框
+        function closePasswordHistoryModal() {
+            const modal = document.getElementById('passwordHistoryModal');
+            if (modal) {
+                modal.remove();
+            }
+        }
+
+        // 切换历史密码显示
+        function toggleHistoryPassword(elementId, password) {
+            const element = document.getElementById(elementId);
+            const button = event.target.closest('button');
+            const icon = button.querySelector('i');
+            
+            if (element.textContent === '••••••••') {
+                element.textContent = password;
+                icon.className = 'fas fa-eye-slash';
+            } else {
+                element.textContent = '••••••••';
+                icon.className = 'fas fa-eye';
+            }
+        }
+
+        // 恢复历史密码
+        async function restorePassword(passwordId, historyId) {
+            if (!confirm('确定要恢复到这个历史密码吗？当前密码将被保存到历史记录中。')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/passwords/restore', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ passwordId, historyId })
+                });
+                
+                if (response.ok) {
+                    showNotification('密码已恢复 🔄');
+                    closePasswordHistoryModal();
+                    loadPasswords(currentPage, searchQuery, categoryFilter);
+                } else {
+                    showNotification('恢复密码失败', 'error');
+                }
+            } catch (error) {
+                showNotification('恢复密码失败', 'error');
             }
         }
 
@@ -3260,7 +3745,7 @@ function getHTML5() {
             if (!confirm('🗑️ 确定要删除这个密码吗？此操作无法撤销。')) return;
             
             try {
-                const response = await fetch(\`/api/passwords/\${passwordId}\`, {
+                const response = await fetch('/api/passwords/' + passwordId, {
                     method: 'DELETE',
                     headers: {
                         'Authorization': 'Bearer ' + authToken
@@ -3279,7 +3764,7 @@ function getHTML5() {
             }
         }
 
-        // 处理密码表单提交 - 改进版本，处理重复检查
+        // 处理密码表单提交 - 修正版本，处理重复检查和密码变更
         async function handlePasswordSubmit(e) {
             e.preventDefault();
             
@@ -3298,7 +3783,43 @@ function getHTML5() {
             }
             
             try {
-                const url = editingPasswordId ? \`/api/passwords/\${editingPasswordId}\` : '/api/passwords';
+                // 首先检查重复（包括密码检查）
+                if (!editingPasswordId) {
+                    const duplicateCheck = await fetch('/api/check-duplicate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + authToken
+                        },
+                        body: JSON.stringify({
+                            url: formData.url,
+                            username: formData.username,
+                            password: formData.password
+                        })
+                    });
+                    
+                    const duplicateResult = await duplicateCheck.json();
+                    
+                    if (duplicateResult.isDuplicate) {
+                        if (duplicateResult.isIdentical) {
+                            showNotification('该账户已存在且密码相同，无需重复保存', 'info');
+                            return;
+                        } else if (duplicateResult.passwordChanged) {
+                            // 显示密码变更确认对话框
+                            const shouldUpdate = await showPasswordChangeDialog(duplicateResult);
+                            if (shouldUpdate) {
+                                // 更新现有密码
+                                await updateExistingPasswordViaAPI(duplicateResult.existing.id, formData.password);
+                                return;
+                            } else {
+                                return; // 用户取消操作
+                            }
+                        }
+                    }
+                }
+                
+                // 正常保存流程
+                const url = editingPasswordId ? '/api/passwords/' + editingPasswordId : '/api/passwords';
                 const method = editingPasswordId ? 'PUT' : 'POST';
                 
                 const response = await fetch(url, {
@@ -3314,16 +3835,93 @@ function getHTML5() {
                     showNotification(editingPasswordId ? '密码已更新 ✅' : '密码已添加 ✅');
                     clearForm();
                     loadPasswords(currentPage, searchQuery, categoryFilter);
-                } else if (response.status === 409) {
-                    // 处理重复冲突
-                    const result = await response.json();
-                    showDuplicateWarning(result.existing);
-                    showNotification(result.message, 'warning');
                 } else {
-                    showNotification('保存失败', 'error');
+                    const errorData = await response.json();
+                    if (errorData.duplicate && errorData.passwordChanged && errorData.shouldUpdate) {
+                        // 相同账号不同密码，显示更新提示
+                        const shouldUpdate = await showPasswordChangeDialog(errorData);
+                        if (shouldUpdate) {
+                            await updateExistingPasswordViaAPI(errorData.existing.id, formData.password);
+                        }
+                    } else {
+                        showNotification(errorData.message || '保存失败', 'error');
+                    }
                 }
             } catch (error) {
                 showNotification('保存失败', 'error');
+            }
+        }
+
+        // 显示密码变更确认对话框
+        function showPasswordChangeDialog(duplicateResult) {
+            return new Promise((resolve) => {
+                const modal = document.createElement('div');
+                modal.className = 'password-change-modal';
+                modal.innerHTML = '<div class="modal-overlay"><div class="modal-content"><div class="modal-header"><h3>🔄 检测到相同账号的密码变更</h3></div><div class="modal-body"><p><strong>网站：</strong>' + duplicateResult.existing.siteName + '</p><p><strong>用户名：</strong>' + duplicateResult.existing.username + '</p><div class="password-comparison"><div class="password-item"><label>🔒 当前保存的密码：</label><div class="password-value" id="currentPassword">••••••••</div><button type="button" class="btn btn-sm btn-secondary" onclick="toggleModalPassword(\'currentPassword\', \'' + duplicateResult.existing.password + '\')"><i class="fas fa-eye"></i></button></div><div class="password-item"><label>🆕 新检测到的密码：</label><div class="password-value" id="newPassword">••••••••</div><button type="button" class="btn btn-sm btn-secondary" onclick="toggleModalPassword(\'newPassword\', \'' + (duplicateResult.newPassword || duplicateResult.existing.password) + '\')"><i class="fas fa-eye"></i></button></div></div><div class="modal-warning"><p>⚠️ 检测到相同账号的密码变更。可能的情况：</p><ul><li>您更改了该账户的密码</li><li>您输入了错误的密码</li></ul><p><strong>注意：相同账号不会被保存为新账户，只能选择更新现有账户的密码。</strong></p></div></div><div class="modal-actions"><button type="button" class="btn btn-primary" onclick="resolvePasswordChange(true)">🔄 更新为新密码</button><button type="button" class="btn btn-secondary" onclick="resolvePasswordChange(false)">❌ 取消操作</button><button type="button" class="btn btn-info" onclick="showPasswordHistory(\'' + duplicateResult.existing.id + '\')">📜 查看密码历史</button></div></div></div>';
+                
+                document.body.appendChild(modal);
+                
+                // 设置全局函数
+                window.resolvePasswordChange = (shouldUpdate) => {
+                    document.body.removeChild(modal);
+                    delete window.resolvePasswordChange;
+                    delete window.toggleModalPassword;
+                    delete window.showPasswordHistory;
+                    resolve(shouldUpdate);
+                };
+                
+                window.toggleModalPassword = (elementId, password) => {
+                    const element = document.getElementById(elementId);
+                    const button = event.target.closest('button');
+                    const icon = button.querySelector('i');
+                    
+                    if (element.textContent === '••••••••') {
+                        element.textContent = password;
+                        icon.className = 'fas fa-eye-slash';
+                    } else {
+                        element.textContent = '••••••••';
+                        icon.className = 'fas fa-eye';
+                    }
+                };
+                
+                window.showPasswordHistory = (passwordId) => {
+                    // 关闭当前对话框
+                    document.body.removeChild(modal);
+                    delete window.resolvePasswordChange;
+                    delete window.toggleModalPassword;
+                    delete window.showPasswordHistory;
+                    
+                    // 显示密码历史
+                    showPasswordHistoryModal(passwordId);
+                    resolve(false);
+                };
+            });
+        }
+
+        // 通过API更新现有密码
+        async function updateExistingPasswordViaAPI(passwordId, newPassword) {
+            try {
+                const response = await fetch('/api/update-existing-password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({
+                        passwordId: passwordId,
+                        newPassword: newPassword
+                    })
+                });
+                
+                if (response.ok) {
+                    showNotification('密码已更新，旧密码已保存到历史记录 🔄', 'success');
+                    clearForm();
+                    loadPasswords(currentPage, searchQuery, categoryFilter);
+                } else {
+                    showNotification('更新密码失败', 'error');
+                }
+            } catch (error) {
+                showNotification('更新密码失败', 'error');
             }
         }
 
@@ -3517,7 +4115,7 @@ function getHTML5() {
                 
                 const result = await response.json();
                 if (result.success) {
-                    showNotification(\`备份成功：\${result.filename} ☁️\`);
+                    showNotification('备份成功：' + result.filename + ' ☁️');
                     document.getElementById('backupPassword').value = '';
                     loadWebDAVFiles();
                 } else {
@@ -3529,10 +4127,10 @@ function getHTML5() {
         }
 
         async function restoreWebDAVBackup(filename) {
-            const restorePassword = prompt(\`请输入备份文件 \${filename} 的密码：\`);
+            const restorePassword = prompt('请输入备份文件 ' + filename + ' 的密码：');
             if (!restorePassword) return;
             
-            if (!confirm(\`确定要从 \${filename} 恢复数据吗？\`)) return;
+            if (!confirm('确定要从 ' + filename + ' 恢复数据吗？')) return;
             
             try {
                 const response = await fetch('/api/webdav/restore', {
@@ -3560,7 +4158,7 @@ function getHTML5() {
         }
 
         async function deleteWebDAVBackup(filename) {
-            if (!confirm(\`确定要删除 \${filename} 吗？\`)) return;
+            if (!confirm('确定要删除 ' + filename + ' 吗？')) return;
             
             try {
                 const response = await fetch('/api/webdav/delete', {
@@ -3592,19 +4190,19 @@ function getHTML5() {
                 return;
             }
             
-            container.innerHTML = files.map(file => \`
-                <div class="backup-file">
-                    <span>📁 \${file}</span>
-                    <div class="backup-file-actions">
-                        <button class="btn btn-success btn-sm" onclick="restoreWebDAVBackup('\${file}')" type="button">
-                            <i class="fas fa-download"></i> 恢复
-                        </button>
-                        <button class="btn btn-danger btn-sm" onclick="deleteWebDAVBackup('\${file}')" type="button">
-                            <i class="fas fa-trash"></i> 删除
-                        </button>
-                    </div>
-                </div>
-            \`).join('');
+            container.innerHTML = files.map(file => 
+                '<div class="backup-file">' +
+                    '<span>📁 ' + file + '</span>' +
+                    '<div class="backup-file-actions">' +
+                        '<button class="btn btn-success btn-sm" onclick="restoreWebDAVBackup(\'' + file + '\')" type="button">' +
+                            '<i class="fas fa-download"></i> 恢复' +
+                        '</button>' +
+                        '<button class="btn btn-danger btn-sm" onclick="deleteWebDAVBackup(\'' + file + '\')" type="button">' +
+                            '<i class="fas fa-trash"></i> 删除' +
+                        '</button>' +
+                    '</div>' +
+                '</div>'
+            ).join('');
         }
 
         // 导出数据
@@ -3629,7 +4227,7 @@ function getHTML5() {
                 const downloadUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = downloadUrl;
-                a.download = \`passwords-encrypted-export-\${new Date().toISOString().split('T')[0]}.json\`;
+                a.download = 'passwords-encrypted-export-' + new Date().toISOString().split('T')[0] + '.json';
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -3700,7 +4298,7 @@ function getHTML5() {
                     
                     const result = await response.json();
                     if (response.ok) {
-                        showNotification(\`导入完成：成功 \${result.imported} 条，失败 \${result.errors} 条 📥\`);
+                        showNotification('导入完成：成功 ' + result.imported + ' 条，失败 ' + result.errors + ' 条 📥');
                         document.getElementById('importFile').value = '';
                         document.getElementById('importPassword').value = '';
                         document.getElementById('encryptedImportForm').classList.add('hidden');
@@ -3738,7 +4336,7 @@ function getHTML5() {
         // 显示通知
         function showNotification(message, type = 'success') {
             const notification = document.createElement('div');
-            notification.className = \`notification \${type}\`;
+            notification.className = 'notification ' + type;
             
             const icons = {
                 success: 'check-circle',
@@ -3747,10 +4345,7 @@ function getHTML5() {
                 info: 'info-circle'
             };
             
-            notification.innerHTML = \`
-                <i class="fas fa-\${icons[type] || icons.success}"></i>
-                \${message}
-            \`;
+            notification.innerHTML = '<i class="fas fa-' + (icons[type] || icons.success) + '"></i>' + message;
             
             document.body.appendChild(notification);
             
@@ -3771,4 +4366,3 @@ function getHTML5() {
 </body>
 </html>`;
 }
-        
