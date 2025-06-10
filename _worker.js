@@ -86,7 +86,7 @@ export default {
   }
 };
 
-// OAuth登录处理 (保持不变)
+// OAuth登录处理
 async function handleOAuthLogin(request, env, corsHeaders) {
   const state = generateRandomString(32);
   const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth/authorize`);
@@ -103,7 +103,7 @@ async function handleOAuthLogin(request, env, corsHeaders) {
   });
 }
 
-// OAuth回调处理 (保持不变，但简化)
+// OAuth回调处理
 async function handleOAuthCallback(request, env, corsHeaders) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
@@ -620,6 +620,8 @@ async function handleWebDAV(request, env, corsHeaders) {
   switch (action) {
     case 'config':
       return handleWebDAVConfig(request, env, corsHeaders, session);
+    case 'test':
+      return handleWebDAVTest(request, env, corsHeaders, session);
     case 'backup':
       return handleWebDAVBackup(request, env, corsHeaders, session);
     case 'restore':
@@ -665,6 +667,60 @@ async function handleWebDAVConfig(request, env, corsHeaders, session) {
   }
   
   return new Response('Method not allowed', { status: 405, headers: corsHeaders });
+}
+
+// WebDAV测试连接
+async function handleWebDAVTest(request, env, corsHeaders, session) {
+  const { webdavUrl, username, password } = await request.json();
+  
+  if (!webdavUrl || !username || !password) {
+    return new Response(JSON.stringify({ error: '请填写完整的WebDAV配置' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  try {
+    // 测试连接 - 尝试获取根目录信息
+    const testResponse = await fetch(webdavUrl, {
+      method: 'PROPFIND',
+      headers: {
+        'Authorization': `Basic ${btoa(`${username}:${password}`)}`,
+        'Depth': '0',
+        'Content-Type': 'application/xml'
+      },
+      body: `<?xml version="1.0" encoding="utf-8" ?>
+        <D:propfind xmlns:D="DAV:">
+          <D:prop>
+            <D:displayname/>
+            <D:getcontentlength/>
+            <D:getcontenttype/>
+            <D:getlastmodified/>
+            <D:resourcetype/>
+          </D:prop>
+        </D:propfind>`
+    });
+    
+    if (testResponse.ok || testResponse.status === 207) { // 207 Multi-Status 也是成功
+      return new Response(JSON.stringify({ 
+        success: true, 
+        message: 'WebDAV连接成功',
+        status: testResponse.status
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    } else {
+      throw new Error(`连接失败: HTTP ${testResponse.status}`);
+    }
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      success: false,
+      error: `WebDAV连接失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
 }
 
 // WebDAV加密备份
@@ -1013,7 +1069,7 @@ async function handleDetectLogin(request, env, corsHeaders) {
   }
 }
 
-// 新增：自动填充API
+// 新增：自动填充API - 修正版本
 async function handleAutoFill(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -1037,21 +1093,75 @@ async function handleAutoFill(request, env, corsHeaders) {
       const data = await env.PASSWORD_KV.get(key.name);
       if (data) {
         const passwordData = JSON.parse(data);
-        if (passwordData.url && passwordData.url.includes(domain)) {
-          // 解密密码
-          passwordData.password = await decryptPassword(passwordData.password, userId);
-          matches.push(passwordData);
+        
+        // 改进匹配逻辑：检查多种匹配方式
+        let isMatch = false;
+        
+        // 1. 检查完整URL匹配
+        if (passwordData.url) {
+          try {
+            const savedUrlObj = new URL(passwordData.url);
+            const savedDomain = savedUrlObj.hostname.replace('www.', '');
+            
+            // 精确域名匹配
+            if (savedDomain === domain) {
+              isMatch = true;
+            }
+            // 子域名匹配（例如：login.example.com 匹配 example.com）
+            else if (domain.includes(savedDomain) || savedDomain.includes(domain)) {
+              isMatch = true;
+            }
+          } catch (e) {
+            // URL解析失败，继续其他匹配方式
+          }
+        }
+        
+        // 2. 检查网站名称匹配
+        if (!isMatch && passwordData.siteName) {
+          const siteName = passwordData.siteName.toLowerCase();
+          const currentDomain = domain.toLowerCase();
+          
+          // 网站名称包含当前域名或当前域名包含网站名称
+          if (siteName.includes(currentDomain) || currentDomain.includes(siteName)) {
+            isMatch = true;
+          }
+        }
+        
+        if (isMatch) {
+          // 解密密码并返回
+          const decryptedPassword = await decryptPassword(passwordData.password, userId);
+          matches.push({
+            id: passwordData.id,
+            siteName: passwordData.siteName,
+            username: passwordData.username,
+            password: decryptedPassword,
+            url: passwordData.url,
+            category: passwordData.category,
+            notes: passwordData.notes
+          });
         }
       }
     }
+    
+    // 按匹配度排序（完全匹配的排在前面）
+    matches.sort((a, b) => {
+      const aExactMatch = a.url && new URL(a.url).hostname.replace('www.', '') === domain;
+      const bExactMatch = b.url && new URL(b.url).hostname.replace('www.', '') === domain;
+      
+      if (aExactMatch && !bExactMatch) return -1;
+      if (!aExactMatch && bExactMatch) return 1;
+      return 0;
+    });
     
     return new Response(JSON.stringify({ matches }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
     
   } catch (error) {
+    console.error('Auto-fill error:', error);
     return new Response(JSON.stringify({ 
-      error: `查询失败: ${error.message}` 
+      error: `查询失败: ${error.message}`,
+      matches: []
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -1059,7 +1169,7 @@ async function handleAutoFill(request, env, corsHeaders) {
   }
 }
 
-// 工具函数保持不变
+// 工具函数
 async function verifySession(request, env) {
   const token = request.headers.get('Authorization')?.replace('Bearer ', '');
   if (!token) return null;
@@ -1170,7 +1280,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5界面 - 移除弹窗，改为页面内容
+// HTML5界面 - 添加测试连接按钮
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1413,6 +1523,11 @@ function getHTML5() {
 
         .btn-warning {
             background: linear-gradient(135deg, var(--warning-color), #d97706);
+            color: white;
+        }
+
+        .btn-info {
+            background: linear-gradient(135deg, var(--info-color), #2563eb);
             color: white;
         }
 
@@ -2154,6 +2269,9 @@ function getHTML5() {
                         <input type="password" id="webdavPassword" class="form-control" placeholder="WebDAV密码" autocomplete="current-password">
                     </div>
                     <div class="flex gap-3 mt-4">
+                        <button class="btn btn-info" onclick="testWebDAVConnection()" type="button">
+                            <i class="fas fa-wifi"></i> 测试连接
+                        </button>
                         <button class="btn btn-primary" onclick="saveWebDAVConfig()" type="button">
                             <i class="fas fa-save"></i> 保存配置
                         </button>
@@ -2684,6 +2802,48 @@ function getHTML5() {
             } else {
                 field.type = 'password';
                 icon.className = 'fas fa-eye';
+            }
+        }
+
+        // WebDAV测试连接
+        async function testWebDAVConnection() {
+            const config = {
+                webdavUrl: document.getElementById('webdavUrl').value,
+                username: document.getElementById('webdavUsername').value,
+                password: document.getElementById('webdavPassword').value
+            };
+            
+            if (!config.webdavUrl || !config.username || !config.password) {
+                showNotification('请填写完整的WebDAV配置', 'error');
+                return;
+            }
+            
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<div class="loading"></div> 测试中...';
+            button.disabled = true;
+            
+            try {
+                const response = await fetch('/api/webdav/test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify(config)
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification('✅ WebDAV连接成功！', 'success');
+                } else {
+                    showNotification(result.error || 'WebDAV连接失败', 'error');
+                }
+            } catch (error) {
+                showNotification('WebDAV连接测试失败', 'error');
+            } finally {
+                button.innerHTML = originalText;
+                button.disabled = false;
             }
         }
 
