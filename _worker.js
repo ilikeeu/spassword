@@ -120,10 +120,7 @@ async function handleRequest(request, env) {
   }
 }
 
-// 导出标准的 Worker 对象，其 fetch 属性指向我们刚定义的 handleRequest 函数
-export default {
-  fetch: handleRequest
-};
+
 
 // OAuth登录处理 - 修正版本
 async function handleOAuthLogin(request, env, corsHeaders) {
