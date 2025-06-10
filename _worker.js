@@ -3,113 +3,126 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
+  }
+};
 
-    // 设置CORS头
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    };
+// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能 + 密码历史管理
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
+// 将核心的 fetch 逻辑提取到独立的 handleRequest 函数中
+async function handleRequest(request, env) {
+  const url = new URL(request.url);
+  const path = url.pathname;
 
-    try {
-      // 路由处理
-      if (path === '/' || path === '/index.html') {
-        return new Response(getHTML5(), {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders }
-        });
-      }
-      
-      if (path === '/api/oauth/login') {
-        // 支持GET和POST两种方法
-        if (request.method === 'GET' || request.method === 'POST') {
-          return handleOAuthLogin(request, env, corsHeaders);
-        }
-      }
+  // 设置CORS头
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
 
-      if (path === '/api/oauth/callback') {
-        return handleOAuthCallback(request, env, corsHeaders);
-      }
-      
-      if (path === '/api/auth/verify') {
-        return handleAuthVerify(request, env, corsHeaders);
-      }
-      
-      if (path === '/api/auth/logout') {
-        return handleLogout(request, env, corsHeaders);
-      }
-      
-      if (path.startsWith('/api/passwords')) {
-        if (path.endsWith('/reveal')) {
-          return getActualPassword(request, env, corsHeaders);
-        }
-        if (path.endsWith('/history')) {
-          return handlePasswordHistory(request, env, corsHeaders);
-        }
-        return handlePasswords(request, env, corsHeaders);
-      }
-      
-      if (path === '/api/passwords/restore') {
-        return handleRestorePassword(request, env, corsHeaders);
-      }
-      
-      if (path.startsWith('/api/categories')) {
-        return handleCategories(request, env, corsHeaders);
-      }
-      
-      if (path === '/api/generate-password') {
-        return handleGeneratePassword(request, env, corsHeaders);
-      }
-      
-      if (path === '/api/export-encrypted') {
-        return handleEncryptedExport(request, env, corsHeaders);
-      }
-      
-      if (path === '/api/import-encrypted') {
-        return handleEncryptedImport(request, env, corsHeaders);
-      }
-      
-      if (path.startsWith('/api/webdav')) {
-        return handleWebDAV(request, env, corsHeaders);
-      }
-      
-      // 登录检测和保存API - 修正版本
-      if (path === '/api/detect-login') {
-        return handleDetectLogin(request, env, corsHeaders);
-      }
-      
-      // 自动填充API - 支持多账户
-      if (path === '/api/auto-fill') {
-        return handleAutoFill(request, env, corsHeaders);
-      }
-      
-      // 账户去重检查API
-      if (path === '/api/check-duplicate') {
-        return handleCheckDuplicate(request, env, corsHeaders);
-      }
-      
-      // 更新现有密码API
-      if (path === '/api/update-existing-password') {
-        return handleUpdateExistingPassword(request, env, corsHeaders);
-      }
-      
-      // 新增：获取用户信息API
-      if (path === '/api/user') {
-        return handleGetUser(request, env, corsHeaders);
-      }
-      
-      return new Response('Not Found', { status: 404, headers: corsHeaders });
-    } catch (error) {
-      console.error('Error:', error);
-      return new Response('Internal Server Error', { 
-        status: 500, 
-        headers: corsHeaders 
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    // 路由处理
+    if (path === '/' || path === '/index.html') {
+      return new Response(getHTML5(), {
+        headers: { 'Content-Type': 'text/html', ...corsHeaders }
       });
     }
+    
+    if (path === '/api/oauth/login') {
+      // 支持GET和POST两种方法
+      if (request.method === 'GET' || request.method === 'POST') {
+        return handleOAuthLogin(request, env, corsHeaders);
+      }
+    }
+
+    if (path === '/api/oauth/callback') {
+      return handleOAuthCallback(request, env, corsHeaders);
+    }
+    
+    if (path === '/api/auth/verify') {
+      return handleAuthVerify(request, env, corsHeaders);
+    }
+    
+    if (path === '/api/auth/logout') {
+      return handleLogout(request, env, corsHeaders);
+    }
+    
+    if (path.startsWith('/api/passwords')) {
+      if (path.endsWith('/reveal')) {
+        return getActualPassword(request, env, corsHeaders);
+      }
+      if (path.endsWith('/history')) {
+        return handlePasswordHistory(request, env, corsHeaders);
+      }
+      return handlePasswords(request, env, corsHeaders);
+    }
+    
+    if (path === '/api/passwords/restore') {
+      return handleRestorePassword(request, env, corsHeaders);
+    }
+    
+    if (path.startsWith('/api/categories')) {
+      return handleCategories(request, env, corsHeaders);
+    }
+    
+    if (path === '/api/generate-password') {
+      return handleGeneratePassword(request, env, corsHeaders);
+    }
+    
+    if (path === '/api/export-encrypted') {
+      return handleEncryptedExport(request, env, corsHeaders);
+    }
+    
+    if (path === '/api/import-encrypted') {
+      return handleEncryptedImport(request, env, corsHeaders);
+    }
+    
+    if (path.startsWith('/api/webdav')) {
+      return handleWebDAV(request, env, corsHeaders);
+    }
+    
+    // 登录检测和保存API - 修正版本
+    if (path === '/api/detect-login') {
+      return handleDetectLogin(request, env, corsHeaders);
+    }
+    
+    // 自动填充API - 支持多账户
+    if (path === '/api/auto-fill') {
+      return handleAutoFill(request, env, corsHeaders);
+    }
+    
+    // 账户去重检查API
+    if (path === '/api/check-duplicate') {
+      return handleCheckDuplicate(request, env, corsHeaders);
+    }
+    
+    // 更新现有密码API
+    if (path === '/api/update-existing-password') {
+      return handleUpdateExistingPassword(request, env, corsHeaders);
+    }
+    
+    // 新增：获取用户信息API
+    if (path === '/api/user') {
+      return handleGetUser(request, env, corsHeaders);
+    }
+    
+    return new Response('Not Found', { status: 404, headers: corsHeaders });
+  } catch (error) {
+    console.error('Error:', error);
+    return new Response('Internal Server Error', { 
+      status: 500, 
+      headers: corsHeaders 
+    });
   }
+}
+
+// 导出标准的 Worker 对象，其 fetch 属性指向我们刚定义的 handleRequest 函数
+export default {
+  fetch: handleRequest
 };
 
 // OAuth登录处理 - 修正版本
