@@ -54,16 +54,8 @@ export default {
         return handleGeneratePassword(request, env, corsHeaders);
       }
       
-      if (path === '/api/export') {
-        return handleExport(request, env, corsHeaders);
-      }
-      
       if (path === '/api/export-encrypted') {
         return handleEncryptedExport(request, env, corsHeaders);
-      }
-      
-      if (path === '/api/import') {
-        return handleImport(request, env, corsHeaders);
       }
       
       if (path === '/api/import-encrypted') {
@@ -72,6 +64,15 @@ export default {
       
       if (path.startsWith('/api/webdav')) {
         return handleWebDAV(request, env, corsHeaders);
+      }
+      
+      // 新增：检测网站登录表单的API
+      if (path === '/api/detect-login') {
+        return handleDetectLogin(request, env, corsHeaders);
+      }
+      
+      if (path === '/api/auto-fill') {
+        return handleAutoFill(request, env, corsHeaders);
       }
       
       return new Response('Not Found', { status: 404, headers: corsHeaders });
@@ -85,7 +86,7 @@ export default {
   }
 };
 
-// OAuth登录处理
+// OAuth登录处理 (保持不变)
 async function handleOAuthLogin(request, env, corsHeaders) {
   const state = generateRandomString(32);
   const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth/authorize`);
@@ -95,7 +96,6 @@ async function handleOAuthLogin(request, env, corsHeaders) {
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('state', state);
   
-  // 存储state用于验证
   await env.PASSWORD_KV.put(`oauth_state_${state}`, 'valid', { expirationTtl: 600 });
   
   return new Response(JSON.stringify({ authUrl: authUrl.toString() }), {
@@ -103,7 +103,7 @@ async function handleOAuthLogin(request, env, corsHeaders) {
   });
 }
 
-// OAuth回调处理
+// OAuth回调处理 (保持不变，但简化)
 async function handleOAuthCallback(request, env, corsHeaders) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
@@ -118,17 +118,14 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     return new Response('Missing code or state', { status: 400, headers: corsHeaders });
   }
   
-  // 验证state
   const storedState = await env.PASSWORD_KV.get(`oauth_state_${state}`);
   if (!storedState) {
     return new Response('Invalid state', { status: 400, headers: corsHeaders });
   }
   
-  // 清理state
   await env.PASSWORD_KV.delete(`oauth_state_${state}`);
   
   try {
-    // 交换访问令牌
     const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth/token`, {
       method: 'POST',
       headers: {
@@ -143,18 +140,11 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     });
     
     if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      console.error('Token exchange failed:', errorText);
       throw new Error(`Token exchange failed: ${tokenResponse.status}`);
     }
     
     const tokenData = await tokenResponse.json();
     
-    if (!tokenData.access_token) {
-      throw new Error('No access token received');
-    }
-    
-    // 获取用户信息
     const userResponse = await fetch(`${env.OAUTH_BASE_URL}/api/user`, {
       headers: {
         'Authorization': `Bearer ${tokenData.access_token}`,
@@ -163,15 +153,11 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     });
     
     if (!userResponse.ok) {
-      const errorText = await userResponse.text();
-      console.error('User info request failed:', errorText);
       throw new Error(`Failed to get user info: ${userResponse.status}`);
     }
     
     const userData = await userResponse.json();
-    console.log('User data received:', userData);
     
-    // 创建会话
     const sessionToken = generateRandomString(64);
     const userSession = {
       userId: userData.id.toString(),
@@ -183,16 +169,14 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     };
     
     await env.PASSWORD_KV.put(`session_${sessionToken}`, JSON.stringify(userSession), { 
-      expirationTtl: 86400 * 7 // 7天
+      expirationTtl: 86400 * 7
     });
     
-    // 重定向到主页面并设置token
     return new Response(`
       <!DOCTYPE html>
       <html lang="zh-CN">
         <head>
           <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>登录成功</title>
           <style>
             body { 
@@ -211,32 +195,15 @@ async function handleOAuthCallback(request, env, corsHeaders) {
               text-align: center;
               box-shadow: 0 10px 25px rgba(0,0,0,0.1);
             }
-            .loading {
-              display: inline-block;
-              width: 20px;
-              height: 20px;
-              border: 3px solid #f3f3f3;
-              border-top: 3px solid #667eea;
-              border-radius: 50%;
-              animation: spin 1s linear infinite;
-              margin-right: 10px;
-            }
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
           </style>
         </head>
         <body>
           <div class="message">
-            <div class="loading"></div>
-            登录成功，正在跳转...
+            <h3>登录成功，正在跳转...</h3>
           </div>
           <script>
             localStorage.setItem('authToken', '${sessionToken}');
-            setTimeout(() => {
-              window.location.href = '/';
-            }, 1000);
+            setTimeout(() => window.location.href = '/', 1000);
           </script>
         </body>
       </html>
@@ -246,51 +213,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     
   } catch (error) {
     console.error('OAuth callback error:', error);
-    return new Response(`
-      <!DOCTYPE html>
-      <html lang="zh-CN">
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>登录失败</title>
-          <style>
-            body { 
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-              display: flex; 
-              justify-content: center; 
-              align-items: center; 
-              height: 100vh; 
-              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-              margin: 0;
-            }
-            .message { 
-              background: white; 
-              padding: 30px; 
-              border-radius: 15px; 
-              text-align: center;
-              box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-              color: #e53e3e;
-            }
-            .btn {
-              background: #667eea;
-              color: white;
-              border: none;
-              padding: 10px 20px;
-              border-radius: 5px;
-              cursor: pointer;
-              margin-top: 15px;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="message">
-            <h3>登录失败</h3>
-            <p>${error.message}</p>
-            <button class="btn" onclick="window.location.href='/'">返回首页</button>
-          </div>
-        </body>
-      </html>
-    `, { 
+    return new Response(`登录失败: ${error.message}`, { 
       status: 500, 
       headers: { 'Content-Type': 'text/html', ...corsHeaders }
     });
@@ -397,6 +320,16 @@ async function handlePasswords(request, env, corsHeaders) {
       newPassword.createdAt = new Date().toISOString();
       newPassword.updatedAt = newPassword.createdAt;
       
+      // 自动提取域名作为网站名称
+      if (newPassword.url && !newPassword.siteName) {
+        try {
+          const urlObj = new URL(newPassword.url);
+          newPassword.siteName = urlObj.hostname.replace('www.', '');
+        } catch (e) {
+          // 忽略URL解析错误
+        }
+      }
+      
       newPassword.password = await encryptPassword(newPassword.password, userId);
       
       await env.PASSWORD_KV.put(`password_${userId}_${newPassword.id}`, JSON.stringify(newPassword));
@@ -492,7 +425,7 @@ async function getActualPassword(request, env, corsHeaders) {
   });
 }
 
-// 分类管理（自定义）
+// 分类管理
 async function handleCategories(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -561,44 +494,6 @@ async function handleGeneratePassword(request, env, corsHeaders) {
   });
 }
 
-// 普通导出
-async function handleExport(request, env, corsHeaders) {
-  const session = await verifySession(request, env);
-  if (!session) {
-    return new Response(JSON.stringify({ error: '未授权' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  
-  const userId = session.userId;
-  const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
-  const passwords = [];
-  
-  for (const key of list.keys) {
-    const data = await env.PASSWORD_KV.get(key.name);
-    if (data) {
-      const passwordData = JSON.parse(data);
-      passwordData.password = await decryptPassword(passwordData.password, userId);
-      passwords.push(passwordData);
-    }
-  }
-  
-  const exportData = {
-    exportDate: new Date().toISOString(),
-    version: '1.0',
-    passwords: passwords
-  };
-  
-  return new Response(JSON.stringify(exportData, null, 2), {
-    headers: { 
-      'Content-Type': 'application/json',
-      'Content-Disposition': 'attachment; filename="passwords-export.json"',
-      ...corsHeaders 
-    }
-  });
-}
-
 // 加密导出
 async function handleEncryptedExport(request, env, corsHeaders) {
   const session = await verifySession(request, env);
@@ -637,7 +532,6 @@ async function handleEncryptedExport(request, env, corsHeaders) {
     passwords: passwords
   };
   
-  // 使用导出密码加密数据
   const encryptedData = await encryptExportData(JSON.stringify(exportData), exportPassword);
   
   return new Response(JSON.stringify({
@@ -650,46 +544,6 @@ async function handleEncryptedExport(request, env, corsHeaders) {
       'Content-Disposition': 'attachment; filename="passwords-encrypted-export.json"',
       ...corsHeaders 
     }
-  });
-}
-
-// 普通导入
-async function handleImport(request, env, corsHeaders) {
-  const session = await verifySession(request, env);
-  if (!session) {
-    return new Response(JSON.stringify({ error: '未授权' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  
-  const userId = session.userId;
-  const importData = await request.json();
-  
-  let imported = 0;
-  let errors = 0;
-  
-  for (const passwordData of importData.passwords || []) {
-    try {
-      const newPassword = {
-        ...passwordData,
-        id: generateId(),
-        userId: userId,
-        importedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      
-      newPassword.password = await encryptPassword(passwordData.password, userId);
-      
-      await env.PASSWORD_KV.put(`password_${userId}_${newPassword.id}`, JSON.stringify(newPassword));
-      imported++;
-    } catch (error) {
-      errors++;
-    }
-  }
-  
-  return new Response(JSON.stringify({ imported, errors }), {
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
   });
 }
 
@@ -713,7 +567,6 @@ async function handleEncryptedImport(request, env, corsHeaders) {
   }
   
   try {
-    // 解密数据
     const decryptedText = await decryptExportData(encryptedData, importPassword);
     const importData = JSON.parse(decryptedText);
     
@@ -751,7 +604,7 @@ async function handleEncryptedImport(request, env, corsHeaders) {
   }
 }
 
-// WebDAV备份处理
+// WebDAV处理 - 改进版
 async function handleWebDAV(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -765,6 +618,8 @@ async function handleWebDAV(request, env, corsHeaders) {
   const action = url.pathname.split('/').pop();
   
   switch (action) {
+    case 'config':
+      return handleWebDAVConfig(request, env, corsHeaders, session);
     case 'backup':
       return handleWebDAVBackup(request, env, corsHeaders, session);
     case 'restore':
@@ -778,20 +633,66 @@ async function handleWebDAV(request, env, corsHeaders) {
   }
 }
 
-// WebDAV备份
-async function handleWebDAVBackup(request, env, corsHeaders, session) {
-  const { webdavUrl, username, password, filename } = await request.json();
+// WebDAV配置管理
+async function handleWebDAVConfig(request, env, corsHeaders, session) {
+  const userId = session.userId;
   
-  if (!webdavUrl || !username || !password) {
-    return new Response(JSON.stringify({ error: '缺少WebDAV配置' }), {
+  if (request.method === 'GET') {
+    const config = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (config) {
+      const decryptedConfig = JSON.parse(config);
+      // 解密密码
+      decryptedConfig.password = await decryptPassword(decryptedConfig.password, userId);
+      return new Response(JSON.stringify(decryptedConfig), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    return new Response(JSON.stringify({}), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  if (request.method === 'POST') {
+    const config = await request.json();
+    // 加密密码
+    config.password = await encryptPassword(config.password, userId);
+    
+    await env.PASSWORD_KV.put(`webdav_config_${userId}`, JSON.stringify(config));
+    
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  return new Response('Method not allowed', { status: 405, headers: corsHeaders });
+}
+
+// WebDAV加密备份
+async function handleWebDAVBackup(request, env, corsHeaders, session) {
+  const { backupPassword } = await request.json();
+  
+  if (!backupPassword) {
+    return new Response(JSON.stringify({ error: '需要备份密码' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
   }
   
   try {
-    // 获取用户所有密码数据
+    // 获取WebDAV配置
     const userId = session.userId;
+    const configData = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (!configData) {
+      return new Response(JSON.stringify({ error: '请先配置WebDAV' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const config = JSON.parse(configData);
+    config.password = await decryptPassword(config.password, userId);
+    
+    // 获取用户所有密码数据
     const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
     const passwords = [];
     
@@ -807,19 +708,27 @@ async function handleWebDAVBackup(request, env, corsHeaders, session) {
     const backupData = {
       backupDate: new Date().toISOString(),
       version: '1.0',
+      encrypted: true,
       user: session.username,
       passwords: passwords
     };
     
-    const backupFilename = filename || `password-backup-${new Date().toISOString().split('T')[0]}.json`;
-    const backupContent = JSON.stringify(backupData, null, 2);
+    // 加密备份数据
+    const encryptedData = await encryptExportData(JSON.stringify(backupData), backupPassword);
+    const backupContent = JSON.stringify({
+      encrypted: true,
+      data: encryptedData,
+      backupDate: new Date().toISOString()
+    }, null, 2);
+    
+    const backupFilename = `password-backup-${new Date().toISOString().split('T')[0]}.json`;
     
     // 上传到WebDAV
-    const uploadUrl = `${webdavUrl.replace(/\/$/, '')}/${backupFilename}`;
+    const uploadUrl = `${config.webdavUrl.replace(/\/$/, '')}/${backupFilename}`;
     const uploadResponse = await fetch(uploadUrl, {
       method: 'PUT',
       headers: {
-        'Authorization': `Basic ${btoa(`${username}:${password}`)}`,
+        'Authorization': `Basic ${btoa(`${config.username}:${config.password}`)}`,
         'Content-Type': 'application/json'
       },
       body: backupContent
@@ -828,7 +737,7 @@ async function handleWebDAVBackup(request, env, corsHeaders, session) {
     if (uploadResponse.ok) {
       return new Response(JSON.stringify({ 
         success: true, 
-        message: '备份成功',
+        message: '加密备份成功',
         filename: backupFilename
       }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -846,23 +755,35 @@ async function handleWebDAVBackup(request, env, corsHeaders, session) {
   }
 }
 
-// WebDAV恢复
+// WebDAV加密恢复
 async function handleWebDAVRestore(request, env, corsHeaders, session) {
-  const { webdavUrl, username, password, filename } = await request.json();
+  const { filename, restorePassword } = await request.json();
   
-  if (!webdavUrl || !username || !password || !filename) {
-    return new Response(JSON.stringify({ error: '缺少WebDAV配置或文件名' }), {
+  if (!filename || !restorePassword) {
+    return new Response(JSON.stringify({ error: '缺少文件名或恢复密码' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
   }
   
   try {
+    const userId = session.userId;
+    const configData = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (!configData) {
+      return new Response(JSON.stringify({ error: '请先配置WebDAV' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const config = JSON.parse(configData);
+    config.password = await decryptPassword(config.password, userId);
+    
     // 从WebDAV下载备份文件
-    const downloadUrl = `${webdavUrl.replace(/\/$/, '')}/${filename}`;
+    const downloadUrl = `${config.webdavUrl.replace(/\/$/, '')}/${filename}`;
     const downloadResponse = await fetch(downloadUrl, {
       headers: {
-        'Authorization': `Basic ${btoa(`${username}:${password}`)}`,
+        'Authorization': `Basic ${btoa(`${config.username}:${config.password}`)}`,
       }
     });
     
@@ -870,8 +791,11 @@ async function handleWebDAVRestore(request, env, corsHeaders, session) {
       throw new Error(`Download failed: ${downloadResponse.status}`);
     }
     
-    const backupData = await downloadResponse.json();
-    const userId = session.userId;
+    const encryptedBackup = await downloadResponse.json();
+    
+    // 解密备份数据
+    const decryptedText = await decryptExportData(encryptedBackup.data, restorePassword);
+    const backupData = JSON.parse(decryptedText);
     
     let imported = 0;
     let errors = 0;
@@ -915,21 +839,33 @@ async function handleWebDAVRestore(request, env, corsHeaders, session) {
 
 // WebDAV删除
 async function handleWebDAVDelete(request, env, corsHeaders, session) {
-  const { webdavUrl, username, password, filename } = await request.json();
+  const { filename } = await request.json();
   
-  if (!webdavUrl || !username || !password || !filename) {
-    return new Response(JSON.stringify({ error: '缺少WebDAV配置或文件名' }), {
+  if (!filename) {
+    return new Response(JSON.stringify({ error: '缺少文件名' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
   }
   
   try {
-    const deleteUrl = `${webdavUrl.replace(/\/$/, '')}/${filename}`;
+    const userId = session.userId;
+    const configData = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (!configData) {
+      return new Response(JSON.stringify({ error: '请先配置WebDAV' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const config = JSON.parse(configData);
+    config.password = await decryptPassword(config.password, userId);
+    
+    const deleteUrl = `${config.webdavUrl.replace(/\/$/, '')}/${filename}`;
     const deleteResponse = await fetch(deleteUrl, {
       method: 'DELETE',
       headers: {
-        'Authorization': `Basic ${btoa(`${username}:${password}`)}`,
+        'Authorization': `Basic ${btoa(`${config.username}:${config.password}`)}`,
       }
     });
     
@@ -955,27 +891,29 @@ async function handleWebDAVDelete(request, env, corsHeaders, session) {
 
 // WebDAV列表
 async function handleWebDAVList(request, env, corsHeaders, session) {
-  const { webdavUrl, username, password } = await request.json();
-  
-  if (!webdavUrl || !username || !password) {
-    return new Response(JSON.stringify({ error: '缺少WebDAV配置' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  
   try {
-    const listResponse = await fetch(webdavUrl, {
+    const userId = session.userId;
+    const configData = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (!configData) {
+      return new Response(JSON.stringify({ error: '请先配置WebDAV' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const config = JSON.parse(configData);
+    config.password = await decryptPassword(config.password, userId);
+    
+    const listResponse = await fetch(config.webdavUrl, {
       method: 'PROPFIND',
       headers: {
-        'Authorization': `Basic ${btoa(`${username}:${password}`)}`,
+        'Authorization': `Basic ${btoa(`${config.username}:${config.password}`)}`,
         'Depth': '1'
       }
     });
     
     if (listResponse.ok) {
       const xmlText = await listResponse.text();
-      // 简单解析XML，提取文件名
       const files = [];
       const regex = /<d:href>([^<]+\.json)<\/d:href>/g;
       let match;
@@ -1006,7 +944,122 @@ async function handleWebDAVList(request, env, corsHeaders, session) {
   }
 }
 
-// 工具函数
+// 新增：登录检测API
+async function handleDetectLogin(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const { url, username, password } = await request.json();
+  
+  try {
+    const urlObj = new URL(url);
+    const domain = urlObj.hostname.replace('www.', '');
+    
+    // 检查是否已存在该域名的密码
+    const userId = session.userId;
+    const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
+    
+    for (const key of list.keys) {
+      const data = await env.PASSWORD_KV.get(key.name);
+      if (data) {
+        const passwordData = JSON.parse(data);
+        if (passwordData.url && passwordData.url.includes(domain)) {
+          return new Response(JSON.stringify({ 
+            exists: true, 
+            password: passwordData 
+          }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+      }
+    }
+    
+    // 如果不存在，创建新的密码条目
+    const newPassword = {
+      id: generateId(),
+      userId: userId,
+      siteName: domain,
+      username: username,
+      password: await encryptPassword(password, userId),
+      url: url,
+      category: '自动保存',
+      notes: '由浏览器扩展自动保存',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    await env.PASSWORD_KV.put(`password_${userId}_${newPassword.id}`, JSON.stringify(newPassword));
+    
+    return new Response(JSON.stringify({ 
+      exists: false, 
+      saved: true,
+      password: { ...newPassword, password: '••••••••' }
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+    
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      error: `保存失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// 新增：自动填充API
+async function handleAutoFill(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const { url } = await request.json();
+  
+  try {
+    const urlObj = new URL(url);
+    const domain = urlObj.hostname.replace('www.', '');
+    
+    const userId = session.userId;
+    const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
+    const matches = [];
+    
+    for (const key of list.keys) {
+      const data = await env.PASSWORD_KV.get(key.name);
+      if (data) {
+        const passwordData = JSON.parse(data);
+        if (passwordData.url && passwordData.url.includes(domain)) {
+          // 解密密码
+          passwordData.password = await decryptPassword(passwordData.password, userId);
+          matches.push(passwordData);
+        }
+      }
+    }
+    
+    return new Response(JSON.stringify({ matches }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+    
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      error: `查询失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// 工具函数保持不变
 async function verifySession(request, env) {
   const token = request.headers.get('Authorization')?.replace('Bearer ', '');
   if (!token) return null;
@@ -1117,27 +1170,18 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5语义化界面
+// HTML5界面 - 移除弹窗，改为页面内容
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="安全、便捷、智能的密码管理解决方案">
-    <meta name="keywords" content="密码管理器,密码安全,OAuth登录,WebDAV备份">
-    <meta name="author" content="Password Manager Pro">
-    <title>🔐 密码管理器 Pro - 安全便捷的密码管理解决方案</title>
-    
-    <!-- 图标和主题 -->
+    <title>🔐 密码管理器 Pro</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔐</text></svg>">
-    <meta name="theme-color" content="#6366f1">
-    
-    <!-- 外部资源 -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     
     <style>
-        /* CSS 自定义属性 */
         :root {
             --primary-color: #6366f1;
             --primary-dark: #4f46e5;
@@ -1168,60 +1212,20 @@ function getHTML5() {
             --transition-slow: 0.5s ease;
         }
 
-        /* 基础重置 */
-        *, *::before, *::after {
+        * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
-        /* 根元素和文档 */
-        html {
-            font-size: 16px;
-            scroll-behavior: smooth;
-        }
-
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--background-gradient);
             min-height: 100vh;
             color: var(--text-primary);
             line-height: 1.6;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
         }
 
-        /* 无障碍支持 */
-        .sr-only {
-            position: absolute;
-            width: 1px;
-            height: 1px;
-            padding: 0;
-            margin: -1px;
-            overflow: hidden;
-            clip: rect(0, 0, 0, 0);
-            white-space: nowrap;
-            border: 0;
-        }
-
-        /* 跳过链接 */
-        .skip-link {
-            position: absolute;
-            top: -40px;
-            left: 6px;
-            background: var(--primary-color);
-            color: white;
-            padding: 8px;
-            text-decoration: none;
-            border-radius: var(--border-radius-sm);
-            z-index: 1000;
-        }
-
-        .skip-link:focus {
-            top: 6px;
-        }
-
-        /* 粒子背景效果 */
         .particles {
             position: fixed;
             top: 0;
@@ -1269,25 +1273,13 @@ function getHTML5() {
         .auth-card {
             background: var(--card-background);
             backdrop-filter: blur(20px);
-            padding: 3.125rem 2.5rem;
+            padding: 3rem 2.5rem;
             border-radius: var(--border-radius-2xl);
             box-shadow: var(--shadow-xl);
             text-align: center;
-            max-width: 28.125rem;
+            max-width: 28rem;
             width: 100%;
             border: 1px solid rgba(255, 255, 255, 0.2);
-            animation: slideInUp 0.6s ease-out;
-        }
-
-        @keyframes slideInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
         }
 
         .auth-card .logo {
@@ -1296,12 +1288,6 @@ function getHTML5() {
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
         }
 
         .auth-card h1 {
@@ -1336,18 +1322,6 @@ function getHTML5() {
             justify-content: space-between;
             align-items: center;
             border: 1px solid rgba(255, 255, 255, 0.2);
-            animation: slideInDown 0.6s ease-out;
-        }
-
-        @keyframes slideInDown {
-            from {
-                opacity: 0;
-                transform: translateY(-30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
         }
 
         .user-profile {
@@ -1369,11 +1343,6 @@ function getHTML5() {
             font-size: 1.25rem;
             overflow: hidden;
             box-shadow: var(--shadow-md);
-            transition: transform var(--transition-normal);
-        }
-
-        .user-avatar:hover {
-            transform: scale(1.05);
         }
 
         .user-avatar img {
@@ -1400,8 +1369,107 @@ function getHTML5() {
             flex-wrap: wrap;
         }
 
+        /* 按钮组件 */
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 50px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all var(--transition-normal);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+            box-shadow: var(--shadow-sm);
+            white-space: nowrap;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #f1f5f9;
+            color: var(--text-primary);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, var(--danger-color), #dc2626);
+            color: white;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success-color), #059669);
+            color: white;
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, var(--warning-color), #d97706);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+
+        .btn-lg {
+            padding: 1rem 2rem;
+            font-size: 1.125rem;
+        }
+
+        /* 导航标签 */
+        .nav-tabs {
+            display: flex;
+            background: var(--card-background);
+            border-radius: var(--border-radius-xl);
+            padding: 0.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .nav-tab {
+            flex: 1;
+            padding: 1rem;
+            text-align: center;
+            border-radius: var(--border-radius-lg);
+            cursor: pointer;
+            transition: all var(--transition-normal);
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .nav-tab.active {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            box-shadow: var(--shadow-md);
+        }
+
+        .nav-tab:hover:not(.active) {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary-color);
+        }
+
+        /* 内容区域 */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
         /* 工具栏 */
-        .app-toolbar {
+        .toolbar {
             background: var(--card-background);
             backdrop-filter: blur(20px);
             padding: 1.5rem;
@@ -1413,18 +1481,6 @@ function getHTML5() {
             gap: 1rem;
             align-items: center;
             border: 1px solid rgba(255, 255, 255, 0.2);
-            animation: slideInLeft 0.6s ease-out;
-        }
-
-        @keyframes slideInLeft {
-            from {
-                opacity: 0;
-                transform: translateX(-30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateX(0);
-            }
         }
 
         .search-container {
@@ -1473,89 +1529,11 @@ function getHTML5() {
             border-color: var(--primary-color);
         }
 
-        /* 按钮组件 */
-        .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: 50px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all var(--transition-normal);
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            text-decoration: none;
-            box-shadow: var(--shadow-sm);
-            white-space: nowrap;
-        }
-
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .btn:active {
-            transform: translateY(0);
-        }
-
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-            color: white;
-        }
-
-        .btn-secondary {
-            background: #f1f5f9;
-            color: var(--text-primary);
-        }
-
-        .btn-danger {
-            background: linear-gradient(135deg, var(--danger-color), #dc2626);
-            color: white;
-        }
-
-        .btn-success {
-            background: linear-gradient(135deg, var(--success-color), #059669);
-            color: white;
-        }
-
-        .btn-warning {
-            background: linear-gradient(135deg, var(--warning-color), #d97706);
-            color: white;
-        }
-
-        .btn-info {
-            background: linear-gradient(135deg, var(--info-color), #2563eb);
-            color: white;
-        }
-
-        .btn-sm {
-            padding: 0.5rem 1rem;
-            font-size: 0.875rem;
-        }
-
-        .btn-lg {
-            padding: 1rem 2rem;
-            font-size: 1.125rem;
-        }
-
         /* 密码网格 */
         .passwords-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(23.75rem, 1fr));
             gap: 1.5rem;
-            animation: fadeIn 0.6s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
         }
 
         /* 密码卡片 */
@@ -1666,84 +1644,16 @@ function getHTML5() {
             justify-content: center;
         }
 
-        /* 模态框 */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            backdrop-filter: blur(8px);
-            z-index: 1000;
-            animation: fadeIn 0.3s ease-out;
-        }
-
-        .modal-overlay.show {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1.25rem;
-        }
-
-        .modal {
+        /* 表单组件 */
+        .form-section {
             background: var(--card-background);
             backdrop-filter: blur(20px);
-            border-radius: var(--border-radius-2xl);
+            border-radius: var(--border-radius-xl);
             padding: 2rem;
-            max-width: 37.5rem;
-            width: 100%;
-            max-height: 90vh;
-            overflow-y: auto;
-            box-shadow: var(--shadow-xl);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            transform: scale(0.9);
-            animation: modalSlideIn 0.3s ease-out forwards;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
-        @keyframes modalSlideIn {
-            to {
-                transform: scale(1);
-            }
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.75rem;
-            padding-bottom: 1rem;
-            border-bottom: 2px solid var(--border-color);
-        }
-
-        .modal-header h2 {
-            color: var(--text-primary);
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
-
-        .close-btn {
-            background: none;
-            border: none;
-            font-size: 1.75rem;
-            cursor: pointer;
-            color: var(--text-secondary);
-            width: 2.5rem;
-            height: 2.5rem;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all var(--transition-normal);
-        }
-
-        .close-btn:hover {
-            background: var(--border-color);
-            color: var(--text-primary);
-        }
-
-        /* 表单组件 */
         .form-group {
             margin-bottom: 1.5rem;
         }
@@ -1846,53 +1756,6 @@ function getHTML5() {
         .range-value {
             font-weight: 600;
             color: var(--primary-color);
-        }
-
-        /* 分类管理 */
-        .category-manager {
-            background: linear-gradient(135deg, #f8fafc, #f1f5f9);
-            padding: 1.25rem;
-            border-radius: var(--border-radius-lg);
-            margin-bottom: 1.5rem;
-            border: 2px solid var(--border-color);
-        }
-
-        .category-input-group {
-            display: flex;
-            gap: 0.75rem;
-            margin-bottom: 1rem;
-        }
-
-        .category-input-group input {
-            flex: 1;
-        }
-
-        .category-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-
-        .category-tag {
-            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
-            color: white;
-            padding: 0.375rem 0.75rem;
-            border-radius: var(--border-radius-xl);
-            font-size: 0.75rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 0.375rem;
-        }
-
-        .category-tag .remove {
-            cursor: pointer;
-            opacity: 0.7;
-            transition: opacity var(--transition-normal);
-        }
-
-        .category-tag .remove:hover {
-            opacity: 1;
         }
 
         /* WebDAV配置 */
@@ -2035,7 +1898,7 @@ function getHTML5() {
                 justify-content: center;
             }
             
-            .app-toolbar {
+            .toolbar {
                 flex-direction: column;
                 align-items: stretch;
             }
@@ -2050,11 +1913,6 @@ function getHTML5() {
             
             .password-actions {
                 flex-direction: column;
-            }
-
-            .modal {
-                margin: 1.25rem;
-                padding: 1.5rem;
             }
 
             .generator-options {
@@ -2073,20 +1931,6 @@ function getHTML5() {
             }
         }
 
-        @media (max-width: 480px) {
-            .auth-card {
-                padding: 2rem 1.5rem;
-            }
-
-            .passwords-grid {
-                gap: 1rem;
-            }
-
-            .password-card {
-                padding: 1.25rem;
-            }
-        }
-
         /* 工具类 */
         .hidden { 
             display: none !important; 
@@ -2095,26 +1939,6 @@ function getHTML5() {
         .text-center { 
             text-align: center; 
         }
-
-        .text-left { 
-            text-align: left; 
-        }
-
-        .text-right { 
-            text-align: right; 
-        }
-
-        .mb-0 { margin-bottom: 0; }
-        .mb-1 { margin-bottom: 0.25rem; }
-        .mb-2 { margin-bottom: 0.5rem; }
-        .mb-3 { margin-bottom: 0.75rem; }
-        .mb-4 { margin-bottom: 1rem; }
-
-        .mt-0 { margin-top: 0; }
-        .mt-1 { margin-top: 0.25rem; }
-        .mt-2 { margin-top: 0.5rem; }
-        .mt-3 { margin-top: 0.75rem; }
-        .mt-4 { margin-top: 1rem; }
 
         .flex { display: flex; }
         .flex-col { flex-direction: column; }
@@ -2129,57 +1953,32 @@ function getHTML5() {
         .w-full { width: 100%; }
         .h-full { height: 100%; }
 
-        /* 深色模式支持 */
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --text-primary: #f9fafb;
-                --text-secondary: #d1d5db;
-                --text-muted: #9ca3af;
-                --border-color: #374151;
-                --card-background: rgba(31, 41, 55, 0.95);
-                --light-color: #1f2937;
-            }
-        }
+        .mb-0 { margin-bottom: 0; }
+        .mb-1 { margin-bottom: 0.25rem; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-3 { margin-bottom: 0.75rem; }
+        .mb-4 { margin-bottom: 1rem; }
 
-        /* 打印样式 */
-        @media print {
-            .particles,
-            .header-actions,
-            .app-toolbar,
-            .password-actions,
-            .modal-overlay {
-                display: none !important;
-            }
-
-            body {
-                background: white;
-            }
-
-            .password-card {
-                break-inside: avoid;
-                box-shadow: none;
-                border: 1px solid #e5e7eb;
-            }
-        }
+        .mt-0 { margin-top: 0; }
+        .mt-1 { margin-top: 0.25rem; }
+        .mt-2 { margin-top: 0.5rem; }
+        .mt-3 { margin-top: 0.75rem; }
+        .mt-4 { margin-top: 1rem; }
     </style>
 </head>
 <body>
-    <!-- 跳过链接 -->
-    <a href="#main-content" class="skip-link">跳到主要内容</a>
-
-    <!-- 粒子背景 -->
-    <div class="particles" id="particles" aria-hidden="true"></div>
+    <div class="particles" id="particles"></div>
 
     <!-- 登录界面 -->
-    <section id="authSection" class="auth-section" role="main">
+    <section id="authSection" class="auth-section">
         <article class="auth-card">
-            <div class="logo" aria-hidden="true">🔐</div>
+            <div class="logo">🔐</div>
             <header>
                 <h1>密码管理器 Pro</h1>
                 <p>安全、便捷、智能的密码管理解决方案</p>
             </header>
             <button id="oauthLoginBtn" class="btn btn-primary btn-lg" type="button">
-                <i class="fas fa-sign-in-alt" aria-hidden="true"></i>
+                <i class="fas fa-sign-in-alt"></i>
                 开始使用 OAuth 登录
             </button>
         </article>
@@ -2190,280 +1989,233 @@ function getHTML5() {
         <!-- 应用头部 -->
         <header class="app-header">
             <div class="user-profile">
-                <div class="user-avatar" id="userAvatar" role="img" aria-label="用户头像">
-                    <i class="fas fa-user" aria-hidden="true"></i>
+                <div class="user-avatar" id="userAvatar">
+                    <i class="fas fa-user"></i>
                 </div>
                 <div class="user-info">
                     <h2 id="userName">用户名</h2>
                     <p id="userEmail">user@example.com</p>
                 </div>
             </div>
-            <nav class="header-actions" role="navigation" aria-label="主要操作">
-                <button class="btn btn-warning" onclick="showWebDAVModal()" type="button">
-                    <i class="fas fa-cloud" aria-hidden="true"></i> 
-                    <span>备份</span>
-                </button>
-                <button class="btn btn-secondary" onclick="showExportModal()" type="button">
-                    <i class="fas fa-download" aria-hidden="true"></i> 
-                    <span>导出</span>
-                </button>
-                <button class="btn btn-secondary" onclick="showImportModal()" type="button">
-                    <i class="fas fa-upload" aria-hidden="true"></i> 
-                    <span>导入</span>
-                </button>
+            <nav class="header-actions">
                 <button class="btn btn-danger" onclick="logout()" type="button">
-                    <i class="fas fa-sign-out-alt" aria-hidden="true"></i> 
+                    <i class="fas fa-sign-out-alt"></i> 
                     <span>登出</span>
                 </button>
             </nav>
         </header>
 
-        <!-- 工具栏 -->
-        <section class="app-toolbar" role="search">
-            <div class="search-container">
-                <label for="searchInput" class="sr-only">搜索密码</label>
-                <i class="fas fa-search search-icon" aria-hidden="true"></i>
-                <input 
-                    type="search" 
-                    id="searchInput" 
-                    class="search-input"
-                    placeholder="搜索网站、用户名或备注..."
-                    autocomplete="off"
-                >
+        <!-- 导航标签 -->
+        <nav class="nav-tabs">
+            <div class="nav-tab active" onclick="switchTab('passwords')">
+                <i class="fas fa-key"></i> 密码管理
             </div>
-            <div>
-                <label for="categoryFilter" class="sr-only">按分类筛选</label>
-                <select id="categoryFilter" class="filter-select">
-                    <option value="">🏷️ 所有分类</option>
-                </select>
+            <div class="nav-tab" onclick="switchTab('add-password')">
+                <i class="fas fa-plus"></i> 添加密码
             </div>
-            <button class="btn btn-primary" onclick="showAddModal()" type="button">
-                <i class="fas fa-plus" aria-hidden="true"></i> 
-                <span>添加密码</span>
-            </button>
-        </section>
+            <div class="nav-tab" onclick="switchTab('backup')">
+                <i class="fas fa-cloud"></i> 云备份
+            </div>
+            <div class="nav-tab" onclick="switchTab('import-export')">
+                <i class="fas fa-exchange-alt"></i> 导入导出
+            </div>
+        </nav>
 
-        <!-- 主要内容区域 -->
-        <main id="main-content" role="main">
-            <section class="passwords-grid" id="passwordsGrid" role="region" aria-label="密码列表">
-                <!-- 密码卡片将在这里动态生成 -->
+        <!-- 密码管理标签页 -->
+        <div id="passwords-tab" class="tab-content active">
+            <!-- 工具栏 -->
+            <section class="toolbar">
+                <div class="search-container">
+                    <i class="fas fa-search search-icon"></i>
+                    <input 
+                        type="search" 
+                        id="searchInput" 
+                        class="search-input"
+                        placeholder="搜索网站、用户名或备注..."
+                        autocomplete="off"
+                    >
+                </div>
+                <div>
+                    <select id="categoryFilter" class="filter-select">
+                        <option value="">🏷️ 所有分类</option>
+                    </select>
+                </div>
             </section>
-        </main>
-    </div>
 
-    <!-- 添加/编辑密码模态框 -->
-    <div id="passwordModalOverlay" class="modal-overlay" role="dialog" aria-labelledby="modalTitle" aria-hidden="true">
-        <div class="modal">
-            <header class="modal-header">
-                <h2 id="modalTitle">✨ 添加新密码</h2>
-                <button class="close-btn" onclick="closePasswordModal()" type="button" aria-label="关闭对话框">
-                    &times;
-                </button>
-            </header>
-            <form id="passwordForm" novalidate>
-                <div class="form-group">
-                    <label for="siteName">🌐 网站名称 *</label>
-                    <input type="text" id="siteName" class="form-control" required placeholder="例如：GitHub、Gmail" autocomplete="off">
-                </div>
-                <div class="form-group">
-                    <label for="username">👤 用户名/邮箱 *</label>
-                    <input type="text" id="username" class="form-control" required placeholder="your@email.com" autocomplete="username">
-                </div>
-                <div class="form-group">
-                    <label for="password">🔑 密码 *</label>
-                    <div class="input-group">
-                        <input type="password" id="password" class="form-control" required placeholder="输入密码" autocomplete="new-password">
-                        <div class="input-group-append">
-                            <button type="button" class="toggle-btn" onclick="togglePasswordVisibility('password')" aria-label="显示/隐藏密码">
-                                <i class="fas fa-eye" aria-hidden="true"></i>
-                            </button>
+            <!-- 密码列表 -->
+            <main>
+                <section class="passwords-grid" id="passwordsGrid">
+                    <!-- 密码卡片将在这里动态生成 -->
+                </section>
+            </main>
+        </div>
+
+        <!-- 添加密码标签页 -->
+        <div id="add-password-tab" class="tab-content">
+            <div class="form-section">
+                <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">✨ 添加新密码</h2>
+                <form id="passwordForm">
+                    <div class="form-group">
+                        <label for="siteName">🌐 网站名称 *</label>
+                        <input type="text" id="siteName" class="form-control" required placeholder="例如：GitHub、Gmail" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="username">👤 用户名/邮箱 *</label>
+                        <input type="text" id="username" class="form-control" required placeholder="your@email.com" autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">🔑 密码 *</label>
+                        <div class="input-group">
+                            <input type="password" id="password" class="form-control" required placeholder="输入密码" autocomplete="new-password">
+                            <div class="input-group-append">
+                                <button type="button" class="toggle-btn" onclick="togglePasswordVisibility('password')">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
                         </div>
+                    </div>
+                    
+                    <!-- 密码生成器 -->
+                    <fieldset class="password-generator">
+                        <legend>🎲 智能密码生成器</legend>
+                        <div class="generator-options">
+                            <div class="form-group">
+                                <label for="passwordLength">长度: <span id="lengthValue" class="range-value">16</span></label>
+                                <input type="range" id="passwordLength" class="range-input" min="8" max="32" value="16">
+                            </div>
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="includeUppercase" checked>
+                                <label for="includeUppercase">ABC 大写字母</label>
+                            </div>
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="includeLowercase" checked>
+                                <label for="includeLowercase">abc 小写字母</label>
+                            </div>
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="includeNumbers" checked>
+                                <label for="includeNumbers">123 数字</label>
+                            </div>
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="includeSymbols">
+                                <label for="includeSymbols">!@# 特殊符号</label>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="generatePassword()">
+                            <i class="fas fa-magic"></i> 生成强密码
+                        </button>
+                    </fieldset>
+
+                    <div class="form-group">
+                        <label for="category">📁 选择分类</label>
+                        <select id="category" class="form-control">
+                            <option value="">选择分类</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="url">🔗 网站链接</label>
+                        <input type="url" id="url" class="form-control" placeholder="https://example.com" autocomplete="url">
+                    </div>
+                    <div class="form-group">
+                        <label for="notes">📝 备注信息</label>
+                        <textarea id="notes" class="form-control" rows="3" placeholder="添加备注信息..."></textarea>
+                    </div>
+                    <div class="flex gap-4 mt-4">
+                        <button type="submit" class="btn btn-primary w-full">
+                            <i class="fas fa-save"></i> 保存密码
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="clearForm()">
+                            <i class="fas fa-eraser"></i> 清空表单
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 云备份标签页 -->
+        <div id="backup-tab" class="tab-content">
+            <!-- WebDAV配置 -->
+            <div class="form-section">
+                <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">☁️ WebDAV 云备份配置</h2>
+                <div class="webdav-section">
+                    <h4><i class="fas fa-cog"></i> 连接配置</h4>
+                    <div class="form-group">
+                        <label for="webdavUrl">🌐 WebDAV 地址</label>
+                        <input type="url" id="webdavUrl" class="form-control" placeholder="https://webdav.teracloud.jp/dav/" autocomplete="url">
+                        <small style="color: var(--text-secondary); margin-top: 0.5rem; display: block;">
+                            支持 TeraCloud、坚果云、NextCloud 等 WebDAV 服务
+                        </small>
+                    </div>
+                    <div class="form-group">
+                        <label for="webdavUsername">👤 用户名</label>
+                        <input type="text" id="webdavUsername" class="form-control" placeholder="WebDAV用户名" autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="webdavPassword">🔑 密码</label>
+                        <input type="password" id="webdavPassword" class="form-control" placeholder="WebDAV密码" autocomplete="current-password">
+                    </div>
+                    <div class="flex gap-3 mt-4">
+                        <button class="btn btn-primary" onclick="saveWebDAVConfig()" type="button">
+                            <i class="fas fa-save"></i> 保存配置
+                        </button>
+                        <button class="btn btn-secondary" onclick="loadWebDAVFiles()" type="button">
+                            <i class="fas fa-list"></i> 列出文件
+                        </button>
                     </div>
                 </div>
                 
-                <!-- 密码生成器 -->
-                <fieldset class="password-generator">
-                    <legend>🎲 智能密码生成器</legend>
-                    <div class="generator-options">
-                        <div class="form-group">
-                            <label for="passwordLength">长度: <span id="lengthValue" class="range-value">16</span></label>
-                            <input type="range" id="passwordLength" class="range-input" min="8" max="32" value="16">
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="includeUppercase" checked>
-                            <label for="includeUppercase">ABC 大写字母</label>
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="includeLowercase" checked>
-                            <label for="includeLowercase">abc 小写字母</label>
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="includeNumbers" checked>
-                            <label for="includeNumbers">123 数字</label>
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="includeSymbols">
-                            <label for="includeSymbols">!@# 特殊符号</label>
-                        </div>
+                <!-- 备份操作 -->
+                <div class="webdav-section">
+                    <h4><i class="fas fa-cloud-upload-alt"></i> 创建加密备份</h4>
+                    <div class="form-group">
+                        <label for="backupPassword">🔐 备份密码</label>
+                        <input type="password" id="backupPassword" class="form-control" placeholder="设置备份密码" autocomplete="new-password">
                     </div>
-                    <button type="button" class="btn btn-secondary" onclick="generatePassword()">
-                        <i class="fas fa-magic" aria-hidden="true"></i> 生成强密码
-                    </button>
-                </fieldset>
-
-                <!-- 分类管理 -->
-                <fieldset class="category-manager">
-                    <legend>🏷️ 分类管理</legend>
-                    <div class="category-input-group">
-                        <label for="newCategoryInput" class="sr-only">新分类名称</label>
-                        <input type="text" id="newCategoryInput" class="form-control" placeholder="添加新分类">
-                        <button type="button" class="btn btn-primary" onclick="addCategory()">
-                            <i class="fas fa-plus" aria-hidden="true"></i>
-                        </button>
-                    </div>
-                    <div class="category-tags" id="categoryTags" role="list" aria-label="已有分类"></div>
-                </fieldset>
-
-                <div class="form-group">
-                    <label for="category">📁 选择分类</label>
-                    <select id="category" class="form-control">
-                        <option value="">选择分类</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="url">🔗 网站链接</label>
-                    <input type="url" id="url" class="form-control" placeholder="https://example.com" autocomplete="url">
-                </div>
-                <div class="form-group">
-                    <label for="notes">📝 备注信息</label>
-                    <textarea id="notes" class="form-control" rows="3" placeholder="添加备注信息..."></textarea>
-                </div>
-                <div class="flex gap-4 mt-4">
-                    <button type="submit" class="btn btn-primary w-full">
-                        <i class="fas fa-save" aria-hidden="true"></i> 保存密码
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="closePasswordModal()">
-                        <i class="fas fa-times" aria-hidden="true"></i> 取消
+                    <button class="btn btn-success w-full" onclick="createWebDAVBackup()" type="button">
+                        <i class="fas fa-cloud-upload-alt"></i> 创建加密备份
                     </button>
                 </div>
-            </form>
-        </div>
-    </div>
 
-    <!-- 导出模态框 -->
-    <div id="exportModalOverlay" class="modal-overlay" role="dialog" aria-labelledby="exportModalTitle" aria-hidden="true">
-        <div class="modal">
-            <header class="modal-header">
-                <h2 id="exportModalTitle">📤 导出密码数据</h2>
-                <button class="close-btn" onclick="closeExportModal()" type="button" aria-label="关闭对话框">
-                    &times;
-                </button>
-            </header>
-            <div class="form-group">
-                <fieldset>
-                    <legend>选择导出方式</legend>
-                    <div class="flex gap-4 mt-4">
-                        <button class="btn btn-secondary w-full" onclick="exportData(false)" type="button">
-                            <i class="fas fa-file-export" aria-hidden="true"></i> 普通导出
-                        </button>
-                        <button class="btn btn-primary w-full" onclick="showEncryptedExportForm()" type="button">
-                            <i class="fas fa-lock" aria-hidden="true"></i> 加密导出
-                        </button>
+                <!-- 备份文件列表 -->
+                <div class="webdav-section">
+                    <h4><i class="fas fa-history"></i> 备份文件</h4>
+                    <div class="backup-files" id="backupFilesList">
+                        <p class="text-center" style="color: #6b7280;">点击"列出文件"查看备份</p>
                     </div>
-                </fieldset>
+                </div>
             </div>
-            <div id="encryptedExportForm" class="hidden">
+        </div>
+
+        <!-- 导入导出标签页 -->
+        <div id="import-export-tab" class="tab-content">
+            <div class="form-section">
+                <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">📤 加密导出</h2>
                 <div class="form-group">
                     <label for="exportPassword">🔐 导出密码</label>
                     <input type="password" id="exportPassword" class="form-control" placeholder="设置导出密码" autocomplete="new-password">
                 </div>
-                <button class="btn btn-primary w-full" onclick="exportData(true)" type="button">
-                    <i class="fas fa-download" aria-hidden="true"></i> 加密导出
+                <button class="btn btn-primary w-full" onclick="exportData()" type="button">
+                    <i class="fas fa-download"></i> 加密导出数据
                 </button>
             </div>
-        </div>
-    </div>
 
-    <!-- 导入模态框 -->
-    <div id="importModalOverlay" class="modal-overlay" role="dialog" aria-labelledby="importModalTitle" aria-hidden="true">
-        <div class="modal">
-            <header class="modal-header">
-                <h2 id="importModalTitle">📥 导入密码数据</h2>
-                <button class="close-btn" onclick="closeImportModal()" type="button" aria-label="关闭对话框">
-                    &times;
-                </button>
-            </header>
-            <div class="form-group">
-                <label for="importFile">📁 选择文件</label>
-                <input type="file" id="importFile" class="form-control" accept=".json" onchange="handleFileSelect()">
-            </div>
-            <div id="encryptedImportForm" class="hidden">
+            <div class="form-section" style="margin-top: 1.5rem;">
+                <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">📥 加密导入</h2>
                 <div class="form-group">
-                    <label for="importPassword">🔐 导入密码</label>
-                    <input type="password" id="importPassword" class="form-control" placeholder="输入导入密码" autocomplete="off">
+                    <label for="importFile">📁 选择加密文件</label>
+                    <input type="file" id="importFile" class="form-control" accept=".json" onchange="handleFileSelect()">
                 </div>
-            </div>
-            <div class="flex gap-4 mt-4">
-                <button class="btn btn-primary w-full" onclick="importData()" type="button">
-                    <i class="fas fa-upload" aria-hidden="true"></i> 开始导入
-                </button>
-                <button class="btn btn-secondary" onclick="closeImportModal()" type="button">
-                    <i class="fas fa-times" aria-hidden="true"></i> 取消
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- WebDAV备份模态框 -->
-    <div id="webdavModalOverlay" class="modal-overlay" role="dialog" aria-labelledby="webdavModalTitle" aria-hidden="true">
-        <div class="modal">
-            <header class="modal-header">
-                <h2 id="webdavModalTitle">☁️ WebDAV 云备份</h2>
-                <button class="close-btn" onclick="closeWebDAVModal()" type="button" aria-label="关闭对话框">
-                    &times;
-                </button>
-            </header>
-            <section class="webdav-section">
-                <h4><i class="fas fa-cog" aria-hidden="true"></i> 连接配置</h4>
-                <div class="form-group">
-                    <label for="webdavUrl">🌐 WebDAV 地址</label>
-                    <input type="url" id="webdavUrl" class="form-control" placeholder="https://dav.example.com/remote.php/dav/files/username/" autocomplete="url">
+                <div id="encryptedImportForm" class="hidden">
+                    <div class="form-group">
+                        <label for="importPassword">🔐 导入密码</label>
+                        <input type="password" id="importPassword" class="form-control" placeholder="输入导入密码" autocomplete="off">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="webdavUsername">👤 用户名</label>
-                    <input type="text" id="webdavUsername" class="form-control" placeholder="WebDAV用户名" autocomplete="username">
-                </div>
-                <div class="form-group">
-                    <label for="webdavPassword">🔑 密码</label>
-                    <input type="password" id="webdavPassword" class="form-control" placeholder="WebDAV密码" autocomplete="current-password">
-                </div>
-                <div class="flex gap-3 mt-4">
-                    <button class="btn btn-primary" onclick="testWebDAVConnection()" type="button">
-                        <i class="fas fa-wifi" aria-hidden="true"></i> 测试连接
-                    </button>
-                    <button class="btn btn-secondary" onclick="loadWebDAVFiles()" type="button">
-                        <i class="fas fa-list" aria-hidden="true"></i> 列出文件
+                <div class="flex gap-4 mt-4">
+                    <button class="btn btn-primary w-full" onclick="importData()" type="button">
+                        <i class="fas fa-upload"></i> 开始导入
                     </button>
                 </div>
-            </section>
-            
-            <section class="webdav-section">
-                <h4><i class="fas fa-cloud-upload-alt" aria-hidden="true"></i> 备份操作</h4>
-                <div class="form-group">
-                    <label for="backupFilename">📁 备份文件名</label>
-                    <input type="text" id="backupFilename" class="form-control" placeholder="password-backup-2024-01-01.json">
-                </div>
-                <button class="btn btn-success w-full" onclick="createWebDAVBackup()" type="button">
-                    <i class="fas fa-cloud-upload-alt" aria-hidden="true"></i> 创建备份
-                </button>
-            </section>
-
-            <section class="webdav-section">
-                <h4><i class="fas fa-history" aria-hidden="true"></i> 备份文件</h4>
-                <div class="backup-files" id="backupFilesList" role="list" aria-label="备份文件列表">
-                    <p class="text-center" style="color: #6b7280;">点击"列出文件"查看备份</p>
-                </div>
-            </section>
+            </div>
         </div>
     </div>
 
@@ -2475,6 +2227,7 @@ function getHTML5() {
         let categories = [];
         let editingPasswordId = null;
         let selectedFile = null;
+        let currentTab = 'passwords';
 
         // 创建粒子背景
         function createParticles() {
@@ -2500,69 +2253,47 @@ function getHTML5() {
                 showAuthSection();
             }
             
-            // 事件监听器
             setupEventListeners();
         });
 
         // 设置事件监听器
         function setupEventListeners() {
-            // 搜索和过滤
             document.getElementById('searchInput').addEventListener('input', filterPasswords);
             document.getElementById('categoryFilter').addEventListener('change', filterPasswords);
-            
-            // 密码长度滑块
             document.getElementById('passwordLength').addEventListener('input', function() {
                 document.getElementById('lengthValue').textContent = this.value;
             });
-            
-            // 表单提交
             document.getElementById('passwordForm').addEventListener('submit', handlePasswordSubmit);
-            
-            // OAuth登录按钮
             document.getElementById('oauthLoginBtn').addEventListener('click', handleOAuthLogin);
             
-            // 键盘事件
-            document.addEventListener('keydown', handleKeyboardEvents);
-            
-            // 点击模态框外部关闭
-            document.addEventListener('click', handleModalOutsideClick);
-        }
-
-        // 键盘事件处理
-        function handleKeyboardEvents(e) {
-            if (e.key === 'Escape') {
-                closeAllModals();
-            }
-            
-            // Ctrl+K 快速搜索
-            if (e.ctrlKey && e.key === 'k') {
-                e.preventDefault();
-                document.getElementById('searchInput').focus();
-            }
-            
-            // Ctrl+N 添加新密码
-            if (e.ctrlKey && e.key === 'n') {
-                e.preventDefault();
-                if (!document.getElementById('authSection').classList.contains('hidden')) {
-                    return;
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    // 可以添加其他快捷键操作
                 }
-                showAddModal();
-            }
+                if (e.ctrlKey && e.key === 'k') {
+                    e.preventDefault();
+                    document.getElementById('searchInput').focus();
+                }
+            });
         }
 
-        // 模态框外部点击处理
-        function handleModalOutsideClick(e) {
-            if (e.target.classList.contains('modal-overlay')) {
-                closeAllModals();
+        // 标签页切换
+        function switchTab(tabName) {
+            // 移除所有活动状态
+            document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // 激活当前标签
+            event.target.classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+            currentTab = tabName;
+            
+            // 如果切换到密码管理页面，刷新数据
+            if (tabName === 'passwords') {
+                loadPasswords();
+            } else if (tabName === 'backup') {
+                loadWebDAVConfig();
             }
-        }
-
-        // 关闭所有模态框
-        function closeAllModals() {
-            closePasswordModal();
-            closeExportModal();
-            closeImportModal();
-            closeWebDAVModal();
         }
 
         // OAuth登录处理
@@ -2621,7 +2352,6 @@ function getHTML5() {
             document.getElementById('authSection').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
             
-            // 更新用户信息
             if (currentUser) {
                 const displayName = currentUser.nickname || currentUser.username || '用户';
                 document.getElementById('userName').textContent = displayName;
@@ -2672,7 +2402,6 @@ function getHTML5() {
                 
                 categories = await response.json();
                 updateCategorySelects();
-                renderCategoryTags();
             } catch (error) {
                 console.error('Failed to load categories:', error);
             }
@@ -2692,71 +2421,6 @@ function getHTML5() {
             });
         }
 
-        // 渲染分类标签
-        function renderCategoryTags() {
-            const container = document.getElementById('categoryTags');
-            container.innerHTML = categories.map(category => \`
-                <div class="category-tag" role="listitem">
-                    \${category}
-                    <span class="remove" onclick="removeCategory('\${category}')" role="button" tabindex="0" aria-label="删除分类 \${category}">×</span>
-                </div>
-            \`).join('');
-        }
-
-        // 添加分类
-        async function addCategory() {
-            const input = document.getElementById('newCategoryInput');
-            const category = input.value.trim();
-            
-            if (!category) return;
-            
-            try {
-                const response = await fetch('/api/categories', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + authToken
-                    },
-                    body: JSON.stringify({ action: 'add', category })
-                });
-                
-                const data = await response.json();
-                if (data.success) {
-                    categories = data.categories;
-                    updateCategorySelects();
-                    renderCategoryTags();
-                    input.value = '';
-                    showNotification('分类添加成功');
-                }
-            } catch (error) {
-                showNotification('添加分类失败', 'error');
-            }
-        }
-
-        // 删除分类
-        async function removeCategory(category) {
-            try {
-                const response = await fetch('/api/categories', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + authToken
-                    },
-                    body: JSON.stringify({ action: 'remove', category })
-                });
-                
-                const data = await response.json();
-                if (data.success) {
-                    categories = data.categories;
-                    updateCategorySelects();
-                    renderCategoryTags();
-                    showNotification('分类删除成功');
-                }
-            } catch (error) {
-                showNotification('删除分类失败', 'error');
-            }
-        }
-
         // 渲染密码列表
         function renderPasswords(filteredPasswords = passwords) {
             const grid = document.getElementById('passwordsGrid');
@@ -2764,22 +2428,22 @@ function getHTML5() {
             if (filteredPasswords.length === 0) {
                 grid.innerHTML = \`
                     <div class="empty-state">
-                        <div class="icon" aria-hidden="true">🔑</div>
+                        <div class="icon">🔑</div>
                         <h3>还没有保存的密码</h3>
-                        <p>点击"添加密码"开始管理您的密码吧！</p>
+                        <p>点击"添加密码"标签页开始管理您的密码吧！</p>
                     </div>
                 \`;
                 return;
             }
             
             grid.innerHTML = filteredPasswords.map(password => \`
-                <article class="password-card" role="article" aria-labelledby="pwd-title-\${password.id}">
+                <article class="password-card">
                     <header class="password-header">
-                        <div class="site-icon" aria-hidden="true">
+                        <div class="site-icon">
                             <i class="fas fa-globe"></i>
                         </div>
                         <div class="password-meta">
-                            <h3 id="pwd-title-\${password.id}">\${password.siteName}</h3>
+                            <h3>\${password.siteName}</h3>
                             \${password.category ? \`<span class="category-badge">\${password.category}</span>\` : ''}
                         </div>
                     </header>
@@ -2791,7 +2455,7 @@ function getHTML5() {
                     
                     <div class="password-field">
                         <label>🔑 密码</label>
-                        <div class="value" id="pwd-\${password.id}" aria-label="密码已隐藏">••••••••</div>
+                        <div class="value" id="pwd-\${password.id}">••••••••</div>
                     </div>
                     
                     \${password.url ? \`
@@ -2809,17 +2473,17 @@ function getHTML5() {
                     \` : ''}
                     
                     <footer class="password-actions">
-                        <button class="btn btn-secondary btn-sm" onclick="togglePasswordDisplay('\${password.id}')" type="button" aria-label="显示密码">
-                            <i class="fas fa-eye" aria-hidden="true"></i>
+                        <button class="btn btn-secondary btn-sm" onclick="togglePasswordDisplay('\${password.id}')" type="button">
+                            <i class="fas fa-eye"></i>
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="copyPassword('\${password.id}')" type="button" aria-label="复制密码">
-                            <i class="fas fa-copy" aria-hidden="true"></i>
+                        <button class="btn btn-secondary btn-sm" onclick="copyPassword('\${password.id}')" type="button">
+                            <i class="fas fa-copy"></i>
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="editPassword('\${password.id}')" type="button" aria-label="编辑密码">
-                            <i class="fas fa-edit" aria-hidden="true"></i>
+                        <button class="btn btn-secondary btn-sm" onclick="editPassword('\${password.id}')" type="button">
+                            <i class="fas fa-edit"></i>
                         </button>
-                        <button class="btn btn-danger btn-sm" onclick="deletePassword('\${password.id}')" type="button" aria-label="删除密码">
-                            <i class="fas fa-trash" aria-hidden="true"></i>
+                        <button class="btn btn-danger btn-sm" onclick="deletePassword('\${password.id}')" type="button">
+                            <i class="fas fa-trash"></i>
                         </button>
                     </footer>
                 </article>
@@ -2859,17 +2523,13 @@ function getHTML5() {
                     
                     const data = await response.json();
                     element.textContent = data.password;
-                    element.setAttribute('aria-label', '密码已显示');
-                    button.innerHTML = '<i class="fas fa-eye-slash" aria-hidden="true"></i>';
-                    button.setAttribute('aria-label', '隐藏密码');
+                    button.innerHTML = '<i class="fas fa-eye-slash"></i>';
                 } catch (error) {
                     showNotification('获取密码失败', 'error');
                 }
             } else {
                 element.textContent = '••••••••';
-                element.setAttribute('aria-label', '密码已隐藏');
-                button.innerHTML = '<i class="fas fa-eye" aria-hidden="true"></i>';
-                button.setAttribute('aria-label', '显示密码');
+                button.innerHTML = '<i class="fas fa-eye"></i>';
             }
         }
 
@@ -2896,7 +2556,6 @@ function getHTML5() {
             if (!password) return;
             
             editingPasswordId = passwordId;
-            document.getElementById('modalTitle').textContent = '✏️ 编辑密码';
             
             document.getElementById('siteName').value = password.siteName;
             document.getElementById('username').value = password.username;
@@ -2905,7 +2564,12 @@ function getHTML5() {
             document.getElementById('url').value = password.url || '';
             document.getElementById('notes').value = password.notes || '';
             
-            showPasswordModal();
+            // 切换到添加密码标签页
+            switchTab('add-password');
+            
+            // 更新按钮文本
+            const submitBtn = document.querySelector('#passwordForm button[type="submit"]');
+            submitBtn.innerHTML = '<i class="fas fa-save"></i> 更新密码';
         }
 
         // 删除密码
@@ -2929,74 +2593,6 @@ function getHTML5() {
             } catch (error) {
                 showNotification('删除失败', 'error');
             }
-        }
-
-        // 模态框控制
-        function showAddModal() {
-            editingPasswordId = null;
-            document.getElementById('modalTitle').textContent = '✨ 添加新密码';
-            document.getElementById('passwordForm').reset();
-            document.getElementById('lengthValue').textContent = '16';
-            showPasswordModal();
-        }
-
-        function showPasswordModal() {
-            const modal = document.getElementById('passwordModalOverlay');
-            modal.classList.add('show');
-            modal.setAttribute('aria-hidden', 'false');
-            document.getElementById('siteName').focus();
-        }
-
-        function closePasswordModal() {
-            const modal = document.getElementById('passwordModalOverlay');
-            modal.classList.remove('show');
-            modal.setAttribute('aria-hidden', 'true');
-            document.getElementById('passwordForm').reset();
-            editingPasswordId = null;
-        }
-
-        function showExportModal() {
-            const modal = document.getElementById('exportModalOverlay');
-            modal.classList.add('show');
-            modal.setAttribute('aria-hidden', 'false');
-            document.getElementById('encryptedExportForm').classList.add('hidden');
-        }
-
-        function closeExportModal() {
-            const modal = document.getElementById('exportModalOverlay');
-            modal.classList.remove('show');
-            modal.setAttribute('aria-hidden', 'true');
-        }
-
-        function showEncryptedExportForm() {
-            document.getElementById('encryptedExportForm').classList.remove('hidden');
-            document.getElementById('exportPassword').focus();
-        }
-
-        function showImportModal() {
-            const modal = document.getElementById('importModalOverlay');
-            modal.classList.add('show');
-            modal.setAttribute('aria-hidden', 'false');
-        }
-
-        function closeImportModal() {
-            const modal = document.getElementById('importModalOverlay');
-            modal.classList.remove('show');
-            modal.setAttribute('aria-hidden', 'true');
-            document.getElementById('importFile').value = '';
-            selectedFile = null;
-        }
-
-        function showWebDAVModal() {
-            const modal = document.getElementById('webdavModalOverlay');
-            modal.classList.add('show');
-            modal.setAttribute('aria-hidden', 'false');
-        }
-
-        function closeWebDAVModal() {
-            const modal = document.getElementById('webdavModalOverlay');
-            modal.classList.remove('show');
-            modal.setAttribute('aria-hidden', 'true');
         }
 
         // 处理密码表单提交
@@ -3027,7 +2623,7 @@ function getHTML5() {
                 
                 if (response.ok) {
                     showNotification(editingPasswordId ? '密码已更新 ✅' : '密码已添加 ✅');
-                    closePasswordModal();
+                    clearForm();
                     loadPasswords();
                 } else {
                     showNotification('保存失败', 'error');
@@ -3035,6 +2631,17 @@ function getHTML5() {
             } catch (error) {
                 showNotification('保存失败', 'error');
             }
+        }
+
+        // 清空表单
+        function clearForm() {
+            document.getElementById('passwordForm').reset();
+            document.getElementById('lengthValue').textContent = '16';
+            editingPasswordId = null;
+            
+            // 恢复按钮文本
+            const submitBtn = document.querySelector('#passwordForm button[type="submit"]');
+            submitBtn.innerHTML = '<i class="fas fa-save"></i> 保存密码';
         }
 
         // 生成密码
@@ -3074,142 +2681,27 @@ function getHTML5() {
             if (field.type === 'password') {
                 field.type = 'text';
                 icon.className = 'fas fa-eye-slash';
-                button.setAttribute('aria-label', '隐藏密码');
             } else {
                 field.type = 'password';
                 icon.className = 'fas fa-eye';
-                button.setAttribute('aria-label', '显示密码');
             }
         }
 
-        // 导出数据
-        async function exportData(encrypted = false) {
-            try {
-                let url = '/api/export';
-                let body = null;
-                
-                if (encrypted) {
-                    const exportPassword = document.getElementById('exportPassword').value;
-                    if (!exportPassword) {
-                        showNotification('请设置导出密码', 'error');
-                        return;
-                    }
-                    url = '/api/export-encrypted';
-                    body = JSON.stringify({ exportPassword });
-                }
-                
-                const response = await fetch(url, {
-                    method: encrypted ? 'POST' : 'GET',
-                    headers: {
-                        'Authorization': 'Bearer ' + authToken,
-                        ...(encrypted && { 'Content-Type': 'application/json' })
-                    },
-                    ...(body && { body })
-                });
-                
-                const blob = await response.blob();
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = downloadUrl;
-                a.download = encrypted ? 
-                    \`passwords-encrypted-export-\${new Date().toISOString().split('T')[0]}.json\` :
-                    \`passwords-export-\${new Date().toISOString().split('T')[0]}.json\`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(downloadUrl);
-                
-                showNotification('数据导出成功 📤');
-                closeExportModal();
-            } catch (error) {
-                showNotification('导出失败', 'error');
-            }
-        }
-
-        // 处理文件选择
-        function handleFileSelect() {
-            const fileInput = document.getElementById('importFile');
-            selectedFile = fileInput.files[0];
+        // WebDAV配置管理
+        async function saveWebDAVConfig() {
+            const config = {
+                webdavUrl: document.getElementById('webdavUrl').value,
+                username: document.getElementById('webdavUsername').value,
+                password: document.getElementById('webdavPassword').value
+            };
             
-            if (selectedFile) {
-                // 检查是否是加密文件
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        const data = JSON.parse(e.target.result);
-                        if (data.encrypted) {
-                            document.getElementById('encryptedImportForm').classList.remove('hidden');
-                        } else {
-                            document.getElementById('encryptedImportForm').classList.add('hidden');
-                        }
-                    } catch (error) {
-                        showNotification('文件格式错误', 'error');
-                    }
-                };
-                reader.readAsText(selectedFile);
-            }
-        }
-
-        // 导入数据
-        async function importData() {
-            if (!selectedFile) {
-                showNotification('请选择文件', 'error');
+            if (!config.webdavUrl || !config.username || !config.password) {
+                showNotification('请填写完整的WebDAV配置', 'error');
                 return;
             }
             
             try {
-                const reader = new FileReader();
-                reader.onload = async function(e) {
-                    const fileContent = e.target.result;
-                    const data = JSON.parse(fileContent);
-                    
-                    let url = '/api/import';
-                    let body = data;
-                    
-                    if (data.encrypted) {
-                        const importPassword = document.getElementById('importPassword').value;
-                        if (!importPassword) {
-                            showNotification('请输入导入密码', 'error');
-                            return;
-                        }
-                        url = '/api/import-encrypted';
-                        body = {
-                            encryptedData: data.data,
-                            importPassword: importPassword
-                        };
-                    }
-                    
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + authToken
-                        },
-                        body: JSON.stringify(body)
-                    });
-                    
-                    const result = await response.json();
-                    if (response.ok) {
-                        showNotification(\`导入完成：成功 \${result.imported} 条，失败 \${result.errors} 条 📥\`);
-                        closeImportModal();
-                        loadPasswords();
-                    } else {
-                        showNotification(result.error || '导入失败', 'error');
-                    }
-                };
-                reader.readAsText(selectedFile);
-            } catch (error) {
-                showNotification('导入失败：文件格式错误', 'error');
-            }
-        }
-
-        // WebDAV 功能
-        async function testWebDAVConnection() {
-            const config = getWebDAVConfig();
-            if (!config) return;
-            
-            try {
-                const response = await fetch('/api/webdav/list', {
+                const response = await fetch('/api/webdav/config', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -3218,29 +2710,44 @@ function getHTML5() {
                     body: JSON.stringify(config)
                 });
                 
-                const result = await response.json();
-                if (result.success) {
-                    showNotification('WebDAV 连接成功 ☁️');
+                if (response.ok) {
+                    showNotification('WebDAV配置已保存 ✅');
                 } else {
-                    showNotification(result.error || 'WebDAV 连接失败', 'error');
+                    showNotification('保存配置失败', 'error');
                 }
             } catch (error) {
-                showNotification('WebDAV 连接失败', 'error');
+                showNotification('保存配置失败', 'error');
+            }
+        }
+
+        async function loadWebDAVConfig() {
+            try {
+                const response = await fetch('/api/webdav/config', {
+                    headers: {
+                        'Authorization': 'Bearer ' + authToken
+                    }
+                });
+                
+                if (response.ok) {
+                    const config = await response.json();
+                    if (config.webdavUrl) {
+                        document.getElementById('webdavUrl').value = config.webdavUrl;
+                        document.getElementById('webdavUsername').value = config.username;
+                        document.getElementById('webdavPassword').value = config.password;
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load WebDAV config:', error);
             }
         }
 
         async function loadWebDAVFiles() {
-            const config = getWebDAVConfig();
-            if (!config) return;
-            
             try {
                 const response = await fetch('/api/webdav/list', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + authToken
-                    },
-                    body: JSON.stringify(config)
+                    }
                 });
                 
                 const result = await response.json();
@@ -3255,11 +2762,11 @@ function getHTML5() {
         }
 
         async function createWebDAVBackup() {
-            const config = getWebDAVConfig();
-            if (!config) return;
-            
-            const filename = document.getElementById('backupFilename').value || 
-                           \`password-backup-\${new Date().toISOString().split('T')[0]}.json\`;
+            const backupPassword = document.getElementById('backupPassword').value;
+            if (!backupPassword) {
+                showNotification('请设置备份密码', 'error');
+                return;
+            }
             
             try {
                 const response = await fetch('/api/webdav/backup', {
@@ -3268,15 +2775,13 @@ function getHTML5() {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + authToken
                     },
-                    body: JSON.stringify({
-                        ...config,
-                        filename: filename
-                    })
+                    body: JSON.stringify({ backupPassword })
                 });
                 
                 const result = await response.json();
                 if (result.success) {
                     showNotification(\`备份成功：\${result.filename} ☁️\`);
+                    document.getElementById('backupPassword').value = '';
                     loadWebDAVFiles();
                 } else {
                     showNotification(result.error || '备份失败', 'error');
@@ -3287,8 +2792,8 @@ function getHTML5() {
         }
 
         async function restoreWebDAVBackup(filename) {
-            const config = getWebDAVConfig();
-            if (!config) return;
+            const restorePassword = prompt(\`请输入备份文件 \${filename} 的密码：\`);
+            if (!restorePassword) return;
             
             if (!confirm(\`确定要从 \${filename} 恢复数据吗？\`)) return;
             
@@ -3300,8 +2805,8 @@ function getHTML5() {
                         'Authorization': 'Bearer ' + authToken
                     },
                     body: JSON.stringify({
-                        ...config,
-                        filename: filename
+                        filename: filename,
+                        restorePassword: restorePassword
                     })
                 });
                 
@@ -3318,9 +2823,6 @@ function getHTML5() {
         }
 
         async function deleteWebDAVBackup(filename) {
-            const config = getWebDAVConfig();
-            if (!config) return;
-            
             if (!confirm(\`确定要删除 \${filename} 吗？\`)) return;
             
             try {
@@ -3330,10 +2832,7 @@ function getHTML5() {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + authToken
                     },
-                    body: JSON.stringify({
-                        ...config,
-                        filename: filename
-                    })
+                    body: JSON.stringify({ filename: filename })
                 });
                 
                 const result = await response.json();
@@ -3348,19 +2847,6 @@ function getHTML5() {
             }
         }
 
-        function getWebDAVConfig() {
-            const webdavUrl = document.getElementById('webdavUrl').value;
-            const username = document.getElementById('webdavUsername').value;
-            const password = document.getElementById('webdavPassword').value;
-            
-            if (!webdavUrl || !username || !password) {
-                showNotification('请填写完整的 WebDAV 配置', 'error');
-                return null;
-            }
-            
-            return { webdavUrl, username, password };
-        }
-
         function renderBackupFiles(files) {
             const container = document.getElementById('backupFilesList');
             
@@ -3370,18 +2856,127 @@ function getHTML5() {
             }
             
             container.innerHTML = files.map(file => \`
-                <div class="backup-file" role="listitem">
+                <div class="backup-file">
                     <span>📁 \${file}</span>
                     <div class="backup-file-actions">
                         <button class="btn btn-success btn-sm" onclick="restoreWebDAVBackup('\${file}')" type="button">
-                            <i class="fas fa-download" aria-hidden="true"></i> 恢复
+                            <i class="fas fa-download"></i> 恢复
                         </button>
                         <button class="btn btn-danger btn-sm" onclick="deleteWebDAVBackup('\${file}')" type="button">
-                            <i class="fas fa-trash" aria-hidden="true"></i> 删除
+                            <i class="fas fa-trash"></i> 删除
                         </button>
                     </div>
                 </div>
             \`).join('');
+        }
+
+        // 导出数据
+        async function exportData() {
+            const exportPassword = document.getElementById('exportPassword').value;
+            if (!exportPassword) {
+                showNotification('请设置导出密码', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/export-encrypted', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ exportPassword })
+                });
+                
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = \`passwords-encrypted-export-\${new Date().toISOString().split('T')[0]}.json\`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(downloadUrl);
+                
+                showNotification('加密数据导出成功 📤');
+                document.getElementById('exportPassword').value = '';
+            } catch (error) {
+                showNotification('导出失败', 'error');
+            }
+        }
+
+        // 处理文件选择
+        function handleFileSelect() {
+            const fileInput = document.getElementById('importFile');
+            selectedFile = fileInput.files[0];
+            
+            if (selectedFile) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (data.encrypted) {
+                            document.getElementById('encryptedImportForm').classList.remove('hidden');
+                        } else {
+                            showNotification('只支持加密文件导入', 'error');
+                            fileInput.value = '';
+                            selectedFile = null;
+                        }
+                    } catch (error) {
+                        showNotification('文件格式错误', 'error');
+                    }
+                };
+                reader.readAsText(selectedFile);
+            }
+        }
+
+        // 导入数据
+        async function importData() {
+            if (!selectedFile) {
+                showNotification('请选择文件', 'error');
+                return;
+            }
+            
+            const importPassword = document.getElementById('importPassword').value;
+            if (!importPassword) {
+                showNotification('请输入导入密码', 'error');
+                return;
+            }
+            
+            try {
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    const fileContent = e.target.result;
+                    const data = JSON.parse(fileContent);
+                    
+                    const response = await fetch('/api/import-encrypted', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + authToken
+                        },
+                        body: JSON.stringify({
+                            encryptedData: data.data,
+                            importPassword: importPassword
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    if (response.ok) {
+                        showNotification(\`导入完成：成功 \${result.imported} 条，失败 \${result.errors} 条 📥\`);
+                        document.getElementById('importFile').value = '';
+                        document.getElementById('importPassword').value = '';
+                        document.getElementById('encryptedImportForm').classList.add('hidden');
+                        selectedFile = null;
+                        loadPasswords();
+                    } else {
+                        showNotification(result.error || '导入失败', 'error');
+                    }
+                };
+                reader.readAsText(selectedFile);
+            } catch (error) {
+                showNotification('导入失败：文件格式错误', 'error');
+            }
         }
 
         // 登出
@@ -3407,8 +3002,6 @@ function getHTML5() {
         function showNotification(message, type = 'success') {
             const notification = document.createElement('div');
             notification.className = \`notification \${type}\`;
-            notification.setAttribute('role', 'alert');
-            notification.setAttribute('aria-live', 'polite');
             
             const icons = {
                 success: 'check-circle',
@@ -3418,18 +3011,16 @@ function getHTML5() {
             };
             
             notification.innerHTML = \`
-                <i class="fas fa-\${icons[type] || icons.success}" aria-hidden="true"></i>
+                <i class="fas fa-\${icons[type] || icons.success}"></i>
                 \${message}
             \`;
             
             document.body.appendChild(notification);
             
-            // 显示动画
             setTimeout(() => {
                 notification.classList.add('show');
             }, 100);
             
-            // 自动隐藏
             setTimeout(() => {
                 notification.classList.remove('show');
                 setTimeout(() => {
