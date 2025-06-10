@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         智能密码管理助手 Pro - 修正版
+// @name         智能密码管理助手 Pro - 优化版
 // @namespace    https://pass.pages.dev/
-// @version      2.1.7
-// @description  自动检测和填充密码，支持多账户切换、密码变更检测和历史记录管理。修正相同账号不同密码的处理逻辑，不会保存为新账号，只提示是否更新现有账号。新增删除历史密码功能。可拖拽浮动按钮，图片呼吸效果。修复图标显示问题。只在检测到登录框时显示图标。
+// @version      2.2.0
+// @description  自动检测和填充密码，支持多账户切换、密码变更检测和历史记录管理。优化API调用频率，减少KV读取操作。只在检测到登录框时显示图标和进行连接。
 // @author       Password Manager Pro
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -25,7 +25,12 @@
         AUTO_SAVE: true,
         AUTO_FILL: true,
         SHOW_NOTIFICATIONS: true,
-        DETECT_PASSWORD_CHANGE: true
+        DETECT_PASSWORD_CHANGE: true,
+        // API调用频率控制
+        API_RATE_LIMIT: {
+            MIN_INTERVAL: 5000, // 最小调用间隔5秒
+            MAX_CALLS_PER_MINUTE: 10 // 每分钟最多10次调用
+        }
     };
 
     // 全局变量
@@ -37,7 +42,43 @@
     let isPasswordManagerSite = false;
     let cachedMatches = [];
     let lastSubmittedData = null;
-    let floatingButton = null; // 添加浮动按钮引用
+    let floatingButton = null;
+
+    // API调用频率控制
+    let apiCallHistory = [];
+    let lastApiCall = 0;
+    let authVerified = false; // 标记是否已验证过认证状态
+
+    // ========== API调用频率控制 ==========
+
+    // 检查是否可以进行API调用
+    function canMakeApiCall() {
+        const now = Date.now();
+
+        // 检查最小间隔
+        if (now - lastApiCall < CONFIG.API_RATE_LIMIT.MIN_INTERVAL) {
+            console.log('⏰ API调用过于频繁，跳过');
+            return false;
+        }
+
+        // 清理一分钟前的调用记录
+        apiCallHistory = apiCallHistory.filter(time => now - time < 60000);
+
+        // 检查每分钟调用次数
+        if (apiCallHistory.length >= CONFIG.API_RATE_LIMIT.MAX_CALLS_PER_MINUTE) {
+            console.log('⏰ API调用次数达到限制，跳过');
+            return false;
+        }
+
+        return true;
+    }
+
+    // 记录API调用
+    function recordApiCall() {
+        const now = Date.now();
+        lastApiCall = now;
+        apiCallHistory.push(now);
+    }
 
     // ========== 全局函数定义 ==========
 
@@ -72,7 +113,14 @@
     // 更新现有密码
     async function updateExistingPassword(passwordId, newPassword) {
         console.log('🔄 updateExistingPassword 被调用', passwordId);
+
+        if (!canMakeApiCall()) {
+            showNotification('⏰ 请稍后再试', 'warning');
+            return;
+        }
+
         try {
+            recordApiCall();
             const response = await makeRequest(`/api/update-existing-password`, {
                 method: 'POST',
                 headers: {
@@ -86,7 +134,9 @@
             });
 
             showNotification('✅ 密码已更新，历史记录已保存', 'success');
-            setTimeout(checkPasswordMatches, 1000);
+
+            // 清除缓存，下次用户操作时重新获取
+            cachedMatches = [];
 
             const prompt = document.querySelector('.pm-password-change-prompt');
             if (prompt) {
@@ -100,7 +150,13 @@
 
     // 查看密码历史
     async function viewPasswordHistory(passwordId) {
+        if (!canMakeApiCall()) {
+            showNotification('⏰ 请稍后再试', 'warning');
+            return;
+        }
+
         try {
+            recordApiCall();
             const response = await makeRequest(`/api/passwords/${passwordId}/history`, {
                 method: 'GET',
                 headers: {
@@ -121,7 +177,13 @@
             return;
         }
 
+        if (!canMakeApiCall()) {
+            showNotification('⏰ 请稍后再试', 'warning');
+            return;
+        }
+
         try {
+            recordApiCall();
             const response = await makeRequest('/api/passwords/delete-history', {
                 method: 'POST',
                 headers: {
@@ -153,7 +215,13 @@
             return;
         }
 
+        if (!canMakeApiCall()) {
+            showNotification('⏰ 请稍后再试', 'warning');
+            return;
+        }
+
         try {
+            recordApiCall();
             const response = await makeRequest('/api/passwords/delete-history', {
                 method: 'POST',
                 headers: {
@@ -179,7 +247,7 @@
         }
     }
 
-    // 显示密码历史模态框 - 修改版本，增加删除按钮
+    // 显示密码历史模态框
     function showPasswordHistoryModal(history, passwordId) {
         const modal = document.createElement('div');
         modal.className = 'pm-password-history-modal';
@@ -232,106 +300,81 @@
 
         document.body.appendChild(modal);
 
-        // -- 本地函数定义 --
+        // 事件委托监听
+        modal.addEventListener('click', (e) => {
+            const target = e.target;
 
-        const closeModal = () => {
-            modal.remove();
-        };
-
-        const toggleHistoryPassword = (button) => {
-            const elementId = button.dataset.elementId;
-            const password = button.dataset.password;
-            const element = document.getElementById(elementId);
-            const icon = button.querySelector('i');
-
-            if (element && icon) {
-                if (element.textContent === '••••••••') {
-                    element.textContent = password;
-                    icon.className = 'fas fa-eye-slash';
-                } else {
-                    element.textContent = '••••••••';
-                    icon.className = 'fas fa-eye';
+            if (target.matches('.pm-modal-overlay') || target.closest('.pm-close-btn')) {
+                if (!target.closest('.pm-modal-content') || target.closest('.pm-close-btn')) {
+                    modal.remove();
+                    return;
                 }
             }
-        };
 
-        const restorePasswordHistory = async (button) => {
-            const passwordIdToRestore = button.dataset.passwordId;
-            const historyIdToRestore = button.dataset.historyId;
+            const toggleButton = target.closest('.pm-btn-toggle-history-pwd');
+            if (toggleButton) {
+                const elementId = toggleButton.dataset.elementId;
+                const password = toggleButton.dataset.password;
+                const element = document.getElementById(elementId);
+                const icon = toggleButton.querySelector('i');
 
-            if (!confirm('确定要恢复到这个历史密码吗？当前密码将被保存到历史记录中。')) {
+                if (element && icon) {
+                    if (element.textContent === '••••••••') {
+                        element.textContent = password;
+                        icon.className = 'fas fa-eye-slash';
+                    } else {
+                        element.textContent = '••••••••';
+                        icon.className = 'fas fa-eye';
+                    }
+                }
                 return;
             }
 
-            try {
-                await makeRequest('/api/passwords/restore', {
+            const restoreButton = target.closest('.pm-btn-restore');
+            if (restoreButton) {
+                const passwordIdToRestore = restoreButton.dataset.passwordId;
+                const historyIdToRestore = restoreButton.dataset.historyId;
+
+                if (!confirm('确定要恢复到这个历史密码吗？当前密码将被保存到历史记录中。')) {
+                    return;
+                }
+
+                if (!canMakeApiCall()) {
+                    showNotification('⏰ 请稍后再试', 'warning');
+                    return;
+                }
+
+                recordApiCall();
+                makeRequest('/api/passwords/restore', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + authToken
                     },
                     body: JSON.stringify({ passwordId: passwordIdToRestore, historyId: historyIdToRestore })
+                }).then(() => {
+                    showNotification('✅ 密码已恢复到历史版本', 'success');
+                    modal.remove();
+                    cachedMatches = []; // 清除缓存
+                }).catch(error => {
+                    showNotification('❌ 恢复密码失败', 'error');
+                    console.error('恢复密码失败:', error);
                 });
-
-                showNotification('✅ 密码已恢复到历史版本', 'success');
-                closeModal();
-                setTimeout(checkPasswordMatches, 1000);
-            } catch (error) {
-                showNotification('❌ 恢复密码失败', 'error');
-                console.error('恢复密码失败:', error);
-            }
-        };
-
-        const deleteHistoryEntryHandler = async (button) => {
-            const passwordIdToDelete = button.dataset.passwordId;
-            const historyIdToDelete = button.dataset.historyId;
-            await deleteHistoryEntry(passwordIdToDelete, historyIdToDelete);
-        };
-
-        const deleteAllHistoryHandler = async (button) => {
-            const passwordIdToDelete = button.dataset.passwordId;
-            await deleteAllHistory(passwordIdToDelete);
-        };
-
-        // -- 事件委托监听 --
-
-        modal.addEventListener('click', (e) => {
-            const target = e.target;
-
-            // 检查是否点击了遮罩层或关闭按钮
-            if (target.matches('.pm-modal-overlay') || target.closest('.pm-close-btn')) {
-                // 确保点击的不是内容区域
-                if (!target.closest('.pm-modal-content') || target.closest('.pm-close-btn')) {
-                    closeModal();
-                    return;
-                }
-            }
-
-            // 检查是否点击了切换密码可见性按钮
-            const toggleButton = target.closest('.pm-btn-toggle-history-pwd');
-            if (toggleButton) {
-                toggleHistoryPassword(toggleButton);
                 return;
             }
 
-            // 检查是否点击了恢复密码按钮
-            const restoreButton = target.closest('.pm-btn-restore');
-            if (restoreButton) {
-                restorePasswordHistory(restoreButton);
-                return;
-            }
-
-            // 检查是否点击了删除单个历史记录按钮
             const deleteButton = target.closest('.pm-btn-delete-history');
             if (deleteButton) {
-                deleteHistoryEntryHandler(deleteButton);
+                const passwordIdToDelete = deleteButton.dataset.passwordId;
+                const historyIdToDelete = deleteButton.dataset.historyId;
+                deleteHistoryEntry(passwordIdToDelete, historyIdToDelete);
                 return;
             }
 
-            // 检查是否点击了删除所有历史记录按钮
             const deleteAllButton = target.closest('.pm-btn-delete-all');
             if (deleteAllButton) {
-                deleteAllHistoryHandler(deleteAllButton);
+                const passwordIdToDelete = deleteAllButton.dataset.passwordId;
+                deleteAllHistory(passwordIdToDelete);
                 return;
             }
         });
@@ -375,19 +418,6 @@
             if (usernameFields.length === 0 && passwordFields.length === 0) {
                 console.warn('⚠️ 未找到任何可填充的字段');
                 showNotification('⚠️ 未找到可填充的字段', 'warning');
-
-                // 显示调试信息
-                const allInputs = document.querySelectorAll('input');
-                console.log('🔍 页面所有输入字段:', Array.from(allInputs).map(input => ({
-                    type: input.type,
-                    name: input.name,
-                    id: input.id,
-                    className: input.className,
-                    placeholder: input.placeholder,
-                    visible: isElementVisible(input),
-                    disabled: input.disabled,
-                    readonly: input.readOnly
-                })));
                 return;
             }
 
@@ -395,22 +425,10 @@
 
             // 填充用户名字段
             if (usernameFields.length > 0 && username) {
-                console.log('🔄 开始填充用户名字段');
                 usernameFields.forEach((field, index) => {
                     try {
-                        console.log(`🔄 尝试填充用户名字段 ${index + 1}:`, {
-                            tag: field.tagName,
-                            type: field.type,
-                            name: field.name,
-                            id: field.id,
-                            className: field.className
-                        });
-
                         if (fillInputField(field, username, '用户名')) {
                             filledFields++;
-                            console.log(`✅ 用户名字段 ${index + 1} 填充成功`);
-                        } else {
-                            console.log(`❌ 用户名字段 ${index + 1} 填充失败`);
                         }
                     } catch (error) {
                         console.error(`❌ 用户名字段 ${index + 1} 填充异常:`, error);
@@ -420,22 +438,10 @@
 
             // 填充密码字段
             if (passwordFields.length > 0 && password) {
-                console.log('🔄 开始填充密码字段');
                 passwordFields.forEach((field, index) => {
                     try {
-                        console.log(`🔄 尝试填充密码字段 ${index + 1}:`, {
-                            tag: field.tagName,
-                            type: field.type,
-                            name: field.name,
-                            id: field.id,
-                            className: field.className
-                        });
-
                         if (fillInputField(field, password, '密码')) {
                             filledFields++;
-                            console.log(`✅ 密码字段 ${index + 1} 填充成功`);
-                        } else {
-                            console.log(`❌ 密码字段 ${index + 1} 填充失败`);
                         }
                     } catch (error) {
                         console.error(`❌ 密码字段 ${index + 1} 填充异常:`, error);
@@ -473,6 +479,7 @@
             if (token) {
                 authToken = token;
                 GM_setValue(CONFIG.STORAGE_KEY, token);
+                authVerified = false; // 重置验证状态
                 verifyAuth().then(() => {
                     if (passwordManagerUI) {
                         passwordManagerUI.remove();
@@ -508,6 +515,7 @@
         },
 
         refreshAuth: async function() {
+            authVerified = false; // 重置验证状态
             await verifyAuth();
             showNotification('🔄 连接状态已刷新', 'info');
             if (passwordManagerUI) {
@@ -534,6 +542,31 @@
             });
 
             showNotification('📍 登录表单已高亮显示', 'info');
+        },
+
+        // 手动获取密码匹配（用户主动操作）
+        getPasswordMatches: async function() {
+            if (!isAuthenticated || isPasswordManagerSite) {
+                showNotification('❌ 未连接到密码管理器', 'error');
+                return [];
+            }
+
+            if (!canMakeApiCall()) {
+                showNotification('⏰ 请稍后再试', 'warning');
+                return cachedMatches;
+            }
+
+            try {
+                recordApiCall();
+                const matches = await getPasswordMatches();
+                cachedMatches = matches;
+                updateFloatingButton(matches);
+                return matches;
+            } catch (error) {
+                console.error('获取密码匹配失败:', error);
+                showNotification('❌ 获取密码匹配失败', 'error');
+                return [];
+            }
         }
     };
 
@@ -550,77 +583,47 @@
     // 改进的字段填充函数
     function fillInputField(field, value, fieldType) {
         if (!field || !value) {
-            console.log(`❌ ${fieldType}字段或值为空`);
             return false;
         }
 
         try {
-            // 检查字段是否可见和可编辑
-            if (!isElementVisible(field)) {
-                console.log(`❌ ${fieldType}字段不可见:`, field);
+            if (!isElementVisible(field) || field.disabled || field.readOnly) {
                 return false;
             }
-
-            if (field.disabled) {
-                console.log(`❌ ${fieldType}字段被禁用:`, field);
-                return false;
-            }
-
-            if (field.readOnly) {
-                console.log(`❌ ${fieldType}字段为只读:`, field);
-                return false;
-            }
-
-            console.log(`🔄 开始填充${fieldType}字段:`, field);
 
             const oldValue = field.value;
 
-            // 聚焦字段
             field.focus();
-            console.log(`📍 ${fieldType}字段已聚焦`);
-
-            // 清空并设置值
             field.value = '';
             field.value = value;
 
-            // 使用原生setter
             try {
                 const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
                 if (descriptor && descriptor.set) {
                     descriptor.set.call(field, value);
-                    console.log(`🔧 ${fieldType}字段使用原生setter设置值`);
                 }
             } catch (e) {
                 console.log(`⚠️ ${fieldType}字段原生setter失败:`, e);
             }
 
-            // 触发事件
             triggerInputEvents(field, value);
 
-            // 验证值
             const finalValue = field.value;
             if (finalValue === value) {
-                console.log(`✅ ${fieldType}字段值设置成功`);
-
-                // 视觉反馈
                 field.style.backgroundColor = '#dcfce7';
                 field.style.borderColor = '#10b981';
                 setTimeout(() => {
                     field.style.backgroundColor = '';
                     field.style.borderColor = '';
                 }, 2000);
-
                 return true;
-            } else {
-                console.log(`❌ ${fieldType}字段值设置失败，期望: ${value}, 实际: ${finalValue}`);
-                return false;
             }
+            return false;
 
         } catch (error) {
             console.error(`❌ 填充${fieldType}字段时发生异常:`, error);
             return false;
         } finally {
-            // 移除焦点
             setTimeout(() => {
                 try {
                     field.blur();
@@ -633,8 +636,6 @@
 
     // 触发输入事件
     function triggerInputEvents(field, value) {
-        console.log('🎭 触发输入事件');
-
         const events = [
             { type: 'focus', event: new FocusEvent('focus', { bubbles: true }) },
             { type: 'input', event: new InputEvent('input', { bubbles: true, data: value }) },
@@ -646,17 +647,14 @@
         events.forEach(({ type, event }) => {
             try {
                 field.dispatchEvent(event);
-                console.log(`✅ 触发${type}事件成功`);
             } catch (e) {
                 console.warn(`❌ 触发${type}事件失败:`, e);
             }
         });
 
-        // React特殊处理
         try {
             if (field._valueTracker) {
                 field._valueTracker.setValue('');
-                console.log('🔧 React _valueTracker 已重置');
             }
         } catch (e) {
             console.warn('React特殊处理失败:', e);
@@ -665,8 +663,6 @@
 
     // 查找用户名字段
     function findAllUsernameFields() {
-        console.log('🔍 开始查找用户名字段');
-
         const selectors = [
             'input[type="text"]',
             'input[type="email"]',
@@ -711,19 +707,13 @@
             }
         });
 
-        const fieldsArray = Array.from(fields);
-        console.log(`🔍 找到 ${fieldsArray.length} 个用户名字段`);
-        return fieldsArray;
+        return Array.from(fields);
     }
 
     // 查找密码字段
     function findAllPasswordFields() {
-        console.log('🔍 开始查找密码字段');
-
         const fields = Array.from(document.querySelectorAll('input[type="password"]'))
             .filter(field => isElementVisible(field));
-
-        console.log(`🔍 找到 ${fields.length} 个密码字段`);
         return fields;
     }
 
@@ -756,30 +746,26 @@
             document.body.appendChild(floatingButton);
         }
         floatingButton.style.display = 'flex';
-        console.log('👁️ 浮动按钮已显示');
     }
 
     // 隐藏浮动按钮
     function hideFloatingButton() {
         if (floatingButton && document.body.contains(floatingButton)) {
             floatingButton.style.display = 'none';
-            console.log('👁️ 浮动按钮已隐藏');
         }
     }
 
     // 更新按钮显示状态
     function updateButtonVisibility() {
         if (isPasswordManagerSite) {
-            // 在密码管理器网站上始终显示
             showFloatingButton();
             return;
         }
 
+        // 只有检测到登录表单时才显示按钮
         if (detectedForms.length > 0) {
-            // 检测到登录表单时显示
             showFloatingButton();
         } else {
-            // 没有登录表单时隐藏
             hideFloatingButton();
         }
     }
@@ -826,7 +812,6 @@
             position: fixed;
             bottom: 20px;
             right: 20px;
-            /* 设置最小尺寸以确保按钮可见 */
             min-width: 48px;
             min-height: 48px;
             background: transparent;
@@ -838,30 +823,26 @@
             align-items: center;
             justify-content: center;
             user-select: none;
-            /* 添加呼吸效果 */
             animation: breathe 4s ease-in-out infinite;
-            /* 拖拽相关样式 */
             touch-action: none;
             padding: 0;
             margin: 0;
-            /* 确保按钮有边界 */
             border-radius: 50%;
         }
 
         .pm-floating-btn:hover {
-            animation-play-state: paused; /* 悬停时暂停呼吸效果 */
+            animation-play-state: paused;
             transform: scale(1.1);
             filter: brightness(1.2) drop-shadow(0 8px 16px rgba(0,0,0,0.3));
         }
 
         .pm-floating-btn.dragging {
-            animation-play-state: paused; /* 拖拽时暂停呼吸效果 */
+            animation-play-state: paused;
             transform: scale(1.1);
             cursor: grabbing;
             filter: brightness(1.3) drop-shadow(0 12px 24px rgba(0,0,0,0.4));
         }
 
-        /* 不同状态下的呼吸效果 */
         .pm-floating-btn.has-matches {
             animation: breatheMatched 3.5s ease-in-out infinite;
         }
@@ -890,19 +871,16 @@
         }
 
         .pm-floating-btn-icon {
-            /* 设置合适的图片尺寸 */
             width: 48px;
             height: 48px;
             object-fit: contain;
             pointer-events: none;
             display: block;
-            /* 确保图片清晰显示 */
             image-rendering: -webkit-optimize-contrast;
             image-rendering: crisp-edges;
             border-radius: 50%;
         }
 
-        /* 备用文字图标样式 */
         .pm-floating-btn.fallback-icon {
             width: 48px;
             height: 48px;
@@ -915,7 +893,6 @@
             justify-content: center;
         }
 
-        /* 图片呼吸效果动画 - 渐变大小 */
         @keyframes breathe {
             0%, 100% {
                 transform: scale(1);
@@ -1408,7 +1385,6 @@
             flex: 1;
         }
 
-        /* 密码历史模态框样式 - 增加删除按钮样式 */
         .pm-password-history-modal {
             position: fixed;
             top: 0;
@@ -1548,7 +1524,6 @@
             font-style: italic;
         }
 
-        /* 响应式设计 */
         @media (max-width: 768px) {
             .pm-modal-content {
                 margin: 16px;
@@ -1576,11 +1551,12 @@
 
     // 初始化
     async function init() {
-        console.log('🔐 密码管理助手 Pro 已启动');
+        console.log('🔐 密码管理助手 Pro 已启动（优化版）');
 
         checkPasswordManagerSite();
 
-        if (authToken) {
+        // 只在有令牌且未验证时进行验证
+        if (authToken && !authVerified) {
             await verifyAuth();
         }
 
@@ -1593,52 +1569,23 @@
 
         if (isPasswordManagerSite) {
             monitorPasswordManagerAuth();
-        } else if (isAuthenticated) {
-            checkPasswordMatches();
         }
+        // 移除自动检查密码匹配，只在用户主动操作时进行
     }
 
-    // 检查密码匹配
-    async function checkPasswordMatches() {
-        try {
-            const matches = await getPasswordMatches();
-            cachedMatches = matches;
-            updateFloatingButton(matches);
-        } catch (error) {
-            console.error('检查密码匹配失败:', error);
-        }
-    }
-
-    // 更新浮动按钮
-    function updateFloatingButton(matches) {
-        if (!floatingButton) return;
-
-        // 移除所有状态类
-        floatingButton.classList.remove('has-matches', 'multiple-matches');
-        const existingCount = floatingButton.querySelector('.match-count');
-        if (existingCount) existingCount.remove();
-
-        if (matches.length > 0) {
-            if (matches.length === 1) {
-                floatingButton.classList.add('has-matches');
-                floatingButton.title = `找到 1 个匹配的账户`;
-            } else {
-                floatingButton.classList.add('multiple-matches');
-                floatingButton.title = `找到 ${matches.length} 个匹配的账户`;
-
-                const countBadge = document.createElement('div');
-                countBadge.className = 'match-count';
-                countBadge.textContent = matches.length > 9 ? '9+' : matches.length;
-                floatingButton.appendChild(countBadge);
-            }
-        } else {
-            floatingButton.title = '密码管理助手 Pro';
-        }
-    }
-
-    // 验证登录状态
+    // 验证登录状态 - 优化版本
     async function verifyAuth() {
+        if (!authToken || authVerified) {
+            return;
+        }
+
+        if (!canMakeApiCall()) {
+            console.log('⏰ API调用限制，跳过认证验证');
+            return;
+        }
+
         try {
+            recordApiCall();
             const response = await makeRequest('/api/auth/verify', {
                 method: 'GET',
                 headers: {
@@ -1649,18 +1596,22 @@
             if (response.authenticated) {
                 isAuthenticated = true;
                 currentUser = response.user;
-                if (!isPasswordManagerSite) {
+                authVerified = true; // 标记已验证
+
+                // 只在密码管理器网站上显示连接成功消息
+                if (isPasswordManagerSite) {
                     showNotification('🔐 密码管理助手已连接', 'success');
-                    setTimeout(checkPasswordMatches, 1000);
                 }
             } else {
                 authToken = '';
                 GM_setValue(CONFIG.STORAGE_KEY, '');
                 isAuthenticated = false;
+                authVerified = false;
             }
         } catch (error) {
             console.error('验证失败:', error);
             isAuthenticated = false;
+            authVerified = false;
         }
     }
 
@@ -1683,22 +1634,18 @@
 
         // 图片加载成功
         icon.onload = function() {
-            console.log('🖼️ 密码管理器图标加载成功，尺寸:', icon.naturalWidth + 'x' + icon.naturalHeight);
             btn.appendChild(icon);
         };
 
         // 图片加载失败，使用备用图标
         icon.onerror = function() {
-            console.error('❌ 密码管理器图标加载失败，使用备用图标');
             btn.classList.add('fallback-icon');
             btn.innerHTML = '🔐';
         };
 
-        // 立即尝试添加图片，如果失败会触发 onerror
         try {
             btn.appendChild(icon);
         } catch (e) {
-            console.error('❌ 添加图片失败，使用备用图标');
             btn.classList.add('fallback-icon');
             btn.innerHTML = '🔐';
         }
@@ -1708,12 +1655,10 @@
         let dragOffset = { x: 0, y: 0 };
         let startTime = 0;
 
-        // 鼠标事件
         btn.addEventListener('mousedown', handleDragStart);
         document.addEventListener('mousemove', handleDragMove);
         document.addEventListener('mouseup', handleDragEnd);
 
-        // 触摸事件（移动端支持）
         btn.addEventListener('touchstart', handleTouchStart, { passive: false });
         document.addEventListener('touchmove', handleTouchMove, { passive: false });
         document.addEventListener('touchend', handleTouchEnd);
@@ -1738,7 +1683,6 @@
             dragOffset.x = clientX - rect.left;
             dragOffset.y = clientY - rect.top;
 
-            // 禁用点击事件
             btn.style.pointerEvents = 'none';
         }
 
@@ -1759,17 +1703,14 @@
             const newX = clientX - dragOffset.x;
             const newY = clientY - dragOffset.y;
 
-            // 计算相对于窗口的位置
             const windowWidth = window.innerWidth;
             const windowHeight = window.innerHeight;
             const btnWidth = btn.offsetWidth;
             const btnHeight = btn.offsetHeight;
 
-            // 限制在窗口范围内
             const left = Math.max(0, Math.min(newX, windowWidth - btnWidth));
             const top = Math.max(0, Math.min(newY, windowHeight - btnHeight));
 
-            // 转换为 bottom 和 right 值
             const bottom = windowHeight - top - btnHeight;
             const right = windowWidth - left - btnWidth;
 
@@ -1795,23 +1736,19 @@
             isDragging = false;
             btn.classList.remove('dragging');
 
-            // 保存位置到存储
             const bottom = parseInt(btn.style.bottom);
             const right = parseInt(btn.style.right);
             GM_setValue('pm_button_position', { bottom, right });
 
-            // 延迟恢复点击事件，避免拖拽结束时触发点击
             setTimeout(() => {
                 btn.style.pointerEvents = 'auto';
 
-                // 如果拖拽时间很短，认为是点击而不是拖拽
                 if (dragDuration < 200) {
                     togglePasswordManager();
                 }
             }, 100);
         }
 
-        // 点击事件（仅在非拖拽状态下触发）
         btn.addEventListener('click', (e) => {
             if (!isDragging) {
                 e.stopPropagation();
@@ -1879,21 +1816,42 @@
                     </div>
                 `;
             } else {
-                const matches = cachedMatches.length > 0 ? cachedMatches : await getPasswordMatches();
+                // 使用缓存的匹配，如果没有则提示用户点击获取
+                const matches = cachedMatches;
 
-                popup.innerHTML = `
-                    <div class="pm-popup-header">
-                        <div class="pm-popup-title">
-                            <span>🔐</span>
-                            <span>密码管理助手 Pro</span>
+                if (matches.length === 0) {
+                    popup.innerHTML = `
+                        <div class="pm-popup-header">
+                            <div class="pm-popup-title">
+                                <span>🔐</span>
+                                <span>密码管理助手 Pro</span>
+                            </div>
                         </div>
-                        ${matches.length > 0 ? renderMatchStats(matches) : ''}
-                    </div>
-                    <div class="pm-popup-content">
-                        ${matches.length > 0 ? renderPasswordMatches(matches) : renderNoMatches()}
-                        ${renderDetectedForms()}
-                    </div>
-                `;
+                        <div class="pm-popup-content">
+                            <div class="pm-no-matches">
+                                <p>🔍 点击下方按钮获取匹配的账户</p>
+                                <button class="pm-btn" data-action="get-matches" style="margin-top: 12px;">
+                                    🔍 获取匹配账户
+                                </button>
+                            </div>
+                            ${renderDetectedForms()}
+                        </div>
+                    `;
+                } else {
+                    popup.innerHTML = `
+                        <div class="pm-popup-header">
+                            <div class="pm-popup-title">
+                                <span>🔐</span>
+                                <span>密码管理助手 Pro</span>
+                            </div>
+                            ${renderMatchStats(matches)}
+                        </div>
+                        <div class="pm-popup-content">
+                            ${renderPasswordMatches(matches)}
+                            ${renderDetectedForms()}
+                        </div>
+                    `;
+                }
             }
         }
 
@@ -1901,7 +1859,7 @@
         passwordManagerUI = popup;
 
         // 使用事件委托来处理所有点击事件
-        popup.addEventListener('click', (e) => {
+        popup.addEventListener('click', async (e) => {
             const target = e.target;
             const fillButton = target.closest('.pm-btn-fill');
             const historyButton = target.closest('.pm-btn-history');
@@ -1924,9 +1882,22 @@
                 window.pmExtension.copyToken(authToken);
             } else if (actionButton) {
                 const action = actionButton.dataset.action;
-                if(action === 'refresh-auth') window.pmExtension.refreshAuth();
-                else if(action === 'set-token') window.pmExtension.setToken();
-                else if(action === 'highlight-forms') window.pmExtension.highlightForms();
+                if(action === 'refresh-auth') {
+                    window.pmExtension.refreshAuth();
+                } else if(action === 'set-token') {
+                    window.pmExtension.setToken();
+                } else if(action === 'highlight-forms') {
+                    window.pmExtension.highlightForms();
+                } else if(action === 'get-matches') {
+                    // 获取匹配账户
+                    const matches = await window.pmExtension.getPasswordMatches();
+                    if (matches.length > 0) {
+                        // 重新创建UI显示匹配结果
+                        popup.remove();
+                        passwordManagerUI = null;
+                        createPasswordManagerUI();
+                    }
+                }
             }
         });
 
@@ -1981,7 +1952,7 @@
         `;
     }
 
-    // 获取密码匹配
+    // 获取密码匹配 - 只在用户主动调用时执行
     async function getPasswordMatches() {
         if (!isAuthenticated || isPasswordManagerSite) return [];
 
@@ -2004,11 +1975,10 @@
         }
     }
 
-    // 渲染密码匹配 - 删除快速填充功能
+    // 渲染密码匹配
     function renderPasswordMatches(matches) {
         let content = '';
 
-        // 添加匹配类型说明
         content += `
             <div class="pm-match-summary">
                 <div class="pm-match-summary-title">🎯 匹配说明</div>
@@ -2029,7 +1999,6 @@
             </div>
         `;
 
-        // 直接显示密码列表，不再区分单个和多个
         content += `
             <div style="margin-bottom: 16px;">
                 <h4 style="margin: 0 0 12px 0; color: #1f2937; font-size: 14px;">
@@ -2150,22 +2119,15 @@
         });
 
         console.log(`🔍 检测到 ${detectedForms.length} 个登录表单`);
-
-        // 更新按钮显示状态
         updateButtonVisibility();
-
-        if (detectedForms.length > 0 && !isPasswordManagerSite) {
-            console.log(`🔍 检测到 ${detectedForms.length} 个登录表单，按钮已显示`);
-        }
     }
 
-    // 处理表单提交 - 修正版本，支持密码变更检测
+    // 处理表单提交 - 优化版本
     async function handleFormSubmit(e) {
         if (!isAuthenticated || isPasswordManagerSite) return;
 
         const form = e.target;
 
-        // 启发式检测：如果表单中有多个可见的密码字段，则判断为注册或修改密码表单，不执行自动保存
         const passwordFields = form.querySelectorAll('input[type="password"]');
         const visiblePasswordFields = Array.from(passwordFields).filter(field => isElementVisible(field));
 
@@ -2184,11 +2146,16 @@
                 password: passwordField.value
             };
 
-            // 记录提交数据，用于后续密码变更检测
             lastSubmittedData = submitData;
 
             setTimeout(async () => {
+                if (!canMakeApiCall()) {
+                    console.log('⏰ API调用限制，跳过密码保存');
+                    return;
+                }
+
                 try {
+                    recordApiCall();
                     const response = await makeRequest('/api/detect-login', {
                         method: 'POST',
                         headers: {
@@ -2201,11 +2168,10 @@
                     if (response.exists && response.identical) {
                         showNotification('🔐 账户已存在且密码相同', 'info');
                     } else if (response.exists && response.passwordChanged && response.shouldUpdate) {
-                        // 修正：相同账号不同密码，显示更新提示而不是保存为新账号
                         showPasswordChangePrompt(response.existing, submitData.password);
                     } else if (response.saved) {
                         showNotification('✅ 新账户已自动保存', 'success');
-                        setTimeout(checkPasswordMatches, 1000);
+                        cachedMatches = []; // 清除缓存
                     }
                 } catch (error) {
                     console.error('保存密码失败:', error);
@@ -2214,7 +2180,7 @@
         }
     }
 
-    // 显示密码变更提示 - 修正版本，支持查看历史记录
+    // 显示密码变更提示
     function showPasswordChangePrompt(existingPassword, newPassword) {
         const existingPrompt = document.querySelector('.pm-password-change-prompt');
         if (existingPrompt) {
@@ -2244,7 +2210,6 @@
 
         document.body.appendChild(prompt);
 
-        // 为提示框添加事件监听
         prompt.addEventListener('click', (e) => {
             if (e.target.closest('.pm-btn-update')) {
                 updateExistingPassword(existingPassword.id, newPassword);
@@ -2260,7 +2225,33 @@
             if (document.body.contains(prompt)) {
                 prompt.remove();
             }
-        }, 15000); // 延长显示时间到15秒
+        }, 15000);
+    }
+
+    // 更新浮动按钮
+    function updateFloatingButton(matches) {
+        if (!floatingButton) return;
+
+        floatingButton.classList.remove('has-matches', 'multiple-matches');
+        const existingCount = floatingButton.querySelector('.match-count');
+        if (existingCount) existingCount.remove();
+
+        if (matches.length > 0) {
+            if (matches.length === 1) {
+                floatingButton.classList.add('has-matches');
+                floatingButton.title = `找到 1 个匹配的账户`;
+            } else {
+                floatingButton.classList.add('multiple-matches');
+                floatingButton.title = `找到 ${matches.length} 个匹配的账户`;
+
+                const countBadge = document.createElement('div');
+                countBadge.className = 'match-count';
+                countBadge.textContent = matches.length > 9 ? '9+' : matches.length;
+                floatingButton.appendChild(countBadge);
+            }
+        } else {
+            floatingButton.title = '密码管理助手 Pro';
+        }
     }
 
     // 监听表单变化
@@ -2284,9 +2275,7 @@
             if (shouldRedetect) {
                 setTimeout(() => {
                     detectLoginForms();
-                    if (isAuthenticated && !isPasswordManagerSite) {
-                        checkPasswordMatches();
-                    }
+                    // 移除自动检查密码匹配
                 }, 500);
             }
         });
@@ -2306,6 +2295,7 @@
                     authToken = value;
                     GM_setValue(CONFIG.STORAGE_KEY, value);
                     isAuthenticated = true;
+                    authVerified = true;
                     showNotification('🔐 已自动获取登录令牌', 'success');
                 }
             }
@@ -2318,6 +2308,7 @@
                 authToken = newToken;
                 GM_setValue(CONFIG.STORAGE_KEY, newToken);
                 isAuthenticated = true;
+                authVerified = true;
                 showNotification('🔐 密码管理器登录状态已同步', 'success');
             }
         }, 2000);
@@ -2331,9 +2322,6 @@
 
         GM_registerMenuCommand('🔄 重新检测表单', () => {
             detectLoginForms();
-            if (isAuthenticated && !isPasswordManagerSite) {
-                checkPasswordMatches();
-            }
             showNotification('🔍 重新检测完成', 'info');
         });
 
@@ -2353,6 +2341,7 @@
             if (token) {
                 authToken = token;
                 GM_setValue(CONFIG.STORAGE_KEY, token);
+                authVerified = false;
                 verifyAuth();
             }
         });
@@ -2361,6 +2350,7 @@
             authToken = '';
             GM_setValue(CONFIG.STORAGE_KEY, '');
             isAuthenticated = false;
+            authVerified = false;
             cachedMatches = [];
             updateFloatingButton([]);
             showNotification('👋 已退出登录', 'info');
@@ -2385,32 +2375,18 @@
             fillPassword(testData);
         });
 
-        GM_registerMenuCommand('📜 密码变更检测开关', () => {
-            CONFIG.DETECT_PASSWORD_CHANGE = !CONFIG.DETECT_PASSWORD_CHANGE;
-            showNotification(`密码变更检测已${CONFIG.DETECT_PASSWORD_CHANGE ? '开启' : '关闭'}`, 'info');
-        });
-
         GM_registerMenuCommand('🔍 调试信息', () => {
-            console.log('=== 密码管理助手 Pro 调试信息 ===');
+            console.log('=== 密码管理助手 Pro 调试信息（优化版）===');
             console.log('认证状态:', isAuthenticated);
+            console.log('认证已验证:', authVerified);
             console.log('当前用户:', currentUser);
             console.log('检测到的表单:', detectedForms);
             console.log('缓存的匹配:', cachedMatches);
             console.log('页面URL:', window.location.href);
             console.log('最后提交数据:', lastSubmittedData);
             console.log('配置信息:', CONFIG);
-            console.log('按钮位置:', GM_getValue('pm_button_position', { bottom: 20, right: 20 }));
-            console.log('按钮显示状态:', floatingButton ? floatingButton.style.display : '未创建');
-            console.log('pmExtension 对象:', window.pmExtension);
-
-            const allInputs = document.querySelectorAll('input');
-            console.log('页面所有输入字段:', Array.from(allInputs).map(input => ({
-                type: input.type,
-                name: input.name,
-                id: input.id,
-                placeholder: input.placeholder,
-                visible: isElementVisible(input)
-            })));
+            console.log('API调用历史:', apiCallHistory);
+            console.log('最后API调用时间:', new Date(lastApiCall).toLocaleString());
 
             showNotification('🔍 调试信息已输出到控制台', 'info');
         });
