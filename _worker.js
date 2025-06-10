@@ -24,9 +24,12 @@ export default {
       }
       
       if (path === '/api/oauth/login') {
-        return handleOAuthLogin(request, env, corsHeaders);
+        // 支持GET和POST两种方法
+        if (request.method === 'GET' || request.method === 'POST') {
+          return handleOAuthLogin(request, env, corsHeaders);
+        }
       }
-      
+
       if (path === '/api/oauth/callback') {
         return handleOAuthCallback(request, env, corsHeaders);
       }
@@ -112,8 +115,16 @@ export default {
 // OAuth登录处理 - 修正版本
 async function handleOAuthLogin(request, env, corsHeaders) {
   try {
+    console.log('OAuth login request received');
+    
     // 检查必要的环境变量
     if (!env.OAUTH_BASE_URL || !env.OAUTH_CLIENT_ID || !env.OAUTH_REDIRECT_URI) {
+      console.error('Missing OAuth configuration:', {
+        OAUTH_BASE_URL: !!env.OAUTH_BASE_URL,
+        OAUTH_CLIENT_ID: !!env.OAUTH_CLIENT_ID,
+        OAUTH_REDIRECT_URI: !!env.OAUTH_REDIRECT_URI
+      });
+      
       return new Response(JSON.stringify({ 
         error: 'OAuth configuration missing',
         details: 'Please configure OAUTH_BASE_URL, OAUTH_CLIENT_ID, and OAUTH_REDIRECT_URI'
@@ -156,6 +167,7 @@ async function handleOAuthLogin(request, env, corsHeaders) {
     });
   }
 }
+
 
 // OAuth回调处理 - 修正版本
 async function handleOAuthCallback(request, env, corsHeaders) {
@@ -3647,7 +3659,7 @@ function getHTML5() {
             }
         }
 
-        // OAuth登录处理 - 修正版本，增加详细的错误处理和调试信息
+        // OAuth登录处理 - 修正版本
         async function handleOAuthLogin() {
             const button = document.getElementById('oauthLoginBtn');
             const originalText = button.innerHTML;
@@ -3660,12 +3672,14 @@ function getHTML5() {
                 
                 addDebugInfo('发送请求到 /api/oauth/login');
                 
+                // 修正：使用正确的请求方式
                 const response = await fetch('/api/oauth/login', {
-                    method: 'GET',
+                    method: 'POST',  // 改为POST
                     headers: {
                         'Accept': 'application/json',
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    body: JSON.stringify({})  // 发送空的JSON体
                 });
                 
                 addDebugInfo('OAuth 登录响应状态: ' + response.status);
@@ -3694,11 +3708,9 @@ function getHTML5() {
                 // 更新按钮状态
                 button.innerHTML = '<div class="loading"></div> 正在跳转到授权页面...';
                 
-                // 延迟跳转，让用户看到状态更新
-                setTimeout(() => {
-                    addDebugInfo('执行页面跳转');
-                    window.location.href = data.authUrl;
-                }, 1000);
+                // 立即跳转
+                addDebugInfo('执行页面跳转');
+                window.location.href = data.authUrl;
                 
             } catch (error) {
                 addDebugInfo('OAuth 登录错误: ' + error.message);
@@ -3710,6 +3722,7 @@ function getHTML5() {
                 button.disabled = false;
             }
         }
+
 
         // 验证登录状态
         async function verifyAuth() {
