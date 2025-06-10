@@ -66,13 +66,19 @@ export default {
         return handleWebDAV(request, env, corsHeaders);
       }
       
-      // 新增：检测网站登录表单的API
+      // 登录检测和保存API
       if (path === '/api/detect-login') {
         return handleDetectLogin(request, env, corsHeaders);
       }
       
+      // 自动填充API - 支持多账户
       if (path === '/api/auto-fill') {
         return handleAutoFill(request, env, corsHeaders);
+      }
+      
+      // 新增：账户去重检查API
+      if (path === '/api/check-duplicate') {
+        return handleCheckDuplicate(request, env, corsHeaders);
       }
       
       return new Response('Not Found', { status: 404, headers: corsHeaders });
@@ -315,6 +321,21 @@ async function handlePasswords(request, env, corsHeaders) {
       
     case 'POST':
       const newPassword = await request.json();
+      
+      // 检查重复 - 改进版本
+      const duplicateCheck = await checkForDuplicates(newPassword, userId, env);
+      if (duplicateCheck.isDuplicate) {
+        return new Response(JSON.stringify({
+          error: '检测到重复账户',
+          duplicate: true,
+          existing: duplicateCheck.existing,
+          message: `该网站已存在相同用户名的账户：${duplicateCheck.existing.siteName} - ${duplicateCheck.existing.username}`
+        }), {
+          status: 409, // Conflict
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+      
       newPassword.id = generateId();
       newPassword.userId = userId;
       newPassword.createdAt = new Date().toISOString();
@@ -392,6 +413,80 @@ async function handlePasswords(request, env, corsHeaders) {
         headers: corsHeaders 
       });
   }
+}
+
+// 检查重复账户 - 新增函数
+async function checkForDuplicates(newPassword, userId, env) {
+  if (!newPassword.url || !newPassword.username) {
+    return { isDuplicate: false };
+  }
+  
+  try {
+    const newUrl = new URL(newPassword.url);
+    const newDomain = newUrl.hostname.replace('www.', '').toLowerCase();
+    const newUsername = newPassword.username.toLowerCase().trim();
+    
+    const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
+    
+    for (const key of list.keys) {
+      const data = await env.PASSWORD_KV.get(key.name);
+      if (data) {
+        const existingPassword = JSON.parse(data);
+        
+        // 跳过正在编辑的同一条记录
+        if (newPassword.id && existingPassword.id === newPassword.id) {
+          continue;
+        }
+        
+        if (existingPassword.url && existingPassword.username) {
+          try {
+            const existingUrl = new URL(existingPassword.url);
+            const existingDomain = existingUrl.hostname.replace('www.', '').toLowerCase();
+            const existingUsername = existingPassword.username.toLowerCase().trim();
+            
+            // 检查域名和用户名是否完全匹配
+            if (existingDomain === newDomain && existingUsername === newUsername) {
+              return {
+                isDuplicate: true,
+                existing: {
+                  ...existingPassword,
+                  password: '••••••••' // 不返回真实密码
+                }
+              };
+            }
+          } catch (e) {
+            // URL解析失败，跳过此条记录
+            continue;
+          }
+        }
+      }
+    }
+    
+    return { isDuplicate: false };
+  } catch (error) {
+    console.error('检查重复时出错:', error);
+    return { isDuplicate: false };
+  }
+}
+
+// 新增：检查重复API
+async function handleCheckDuplicate(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const data = await request.json();
+  const userId = session.userId;
+  
+  const duplicateCheck = await checkForDuplicates(data, userId, env);
+  
+  return new Response(JSON.stringify(duplicateCheck), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders }
+  });
 }
 
 // 获取实际密码
@@ -1000,7 +1095,7 @@ async function handleWebDAVList(request, env, corsHeaders, session) {
   }
 }
 
-// 新增：登录检测API
+// 登录检测API - 改进版本，包含重复检查
 async function handleDetectLogin(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -1015,27 +1110,22 @@ async function handleDetectLogin(request, env, corsHeaders) {
   try {
     const urlObj = new URL(url);
     const domain = urlObj.hostname.replace('www.', '');
-    
-    // 检查是否已存在该域名的密码
     const userId = session.userId;
-    const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
     
-    for (const key of list.keys) {
-      const data = await env.PASSWORD_KV.get(key.name);
-      if (data) {
-        const passwordData = JSON.parse(data);
-        if (passwordData.url && passwordData.url.includes(domain)) {
-          return new Response(JSON.stringify({ 
-            exists: true, 
-            password: passwordData 
-          }), {
-            headers: { 'Content-Type': 'application/json', ...corsHeaders }
-          });
-        }
-      }
+    // 检查是否已存在该域名和用户名的密码
+    const duplicateCheck = await checkForDuplicates({ url, username }, userId, env);
+    
+    if (duplicateCheck.isDuplicate) {
+      return new Response(JSON.stringify({ 
+        exists: true, 
+        password: duplicateCheck.existing,
+        message: `该网站已存在相同用户名的账户：${duplicateCheck.existing.siteName} - ${duplicateCheck.existing.username}`
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
     }
     
-    // 如果不存在，创建新的密码条目
+    // 如果不存在重复，创建新的密码条目
     const newPassword = {
       id: generateId(),
       userId: userId,
@@ -1054,14 +1144,15 @@ async function handleDetectLogin(request, env, corsHeaders) {
     return new Response(JSON.stringify({ 
       exists: false, 
       saved: true,
-      password: { ...newPassword, password: '••••••••' }
+      password: { ...newPassword, password: '••••••••' },
+      message: '新账户已自动保存'
     }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
     
   } catch (error) {
     return new Response(JSON.stringify({ 
-      error: `保存失败: ${error.message}` 
+      error: `处理失败: ${error.message}` 
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -1069,7 +1160,7 @@ async function handleDetectLogin(request, env, corsHeaders) {
   }
 }
 
-// 新增：自动填充API - 修正版本
+// 自动填充API - 改进版本，支持多账户选择
 async function handleAutoFill(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -1096,6 +1187,8 @@ async function handleAutoFill(request, env, corsHeaders) {
         
         // 改进匹配逻辑：检查多种匹配方式
         let isMatch = false;
+        let matchType = '';
+        let matchScore = 0;
         
         // 1. 检查完整URL匹配
         if (passwordData.url) {
@@ -1103,13 +1196,17 @@ async function handleAutoFill(request, env, corsHeaders) {
             const savedUrlObj = new URL(passwordData.url);
             const savedDomain = savedUrlObj.hostname.replace('www.', '');
             
-            // 精确域名匹配
+            // 精确域名匹配 (最高优先级)
             if (savedDomain === domain) {
               isMatch = true;
+              matchType = 'exact';
+              matchScore = 100;
             }
-            // 子域名匹配（例如：login.example.com 匹配 example.com）
+            // 子域名匹配
             else if (domain.includes(savedDomain) || savedDomain.includes(domain)) {
               isMatch = true;
+              matchType = 'subdomain';
+              matchScore = 80;
             }
           } catch (e) {
             // URL解析失败，继续其他匹配方式
@@ -1124,6 +1221,8 @@ async function handleAutoFill(request, env, corsHeaders) {
           // 网站名称包含当前域名或当前域名包含网站名称
           if (siteName.includes(currentDomain) || currentDomain.includes(siteName)) {
             isMatch = true;
+            matchType = 'sitename';
+            matchScore = 60;
           }
         }
         
@@ -1137,23 +1236,33 @@ async function handleAutoFill(request, env, corsHeaders) {
             password: decryptedPassword,
             url: passwordData.url,
             category: passwordData.category,
-            notes: passwordData.notes
+            notes: passwordData.notes,
+            matchType: matchType,
+            matchScore: matchScore,
+            createdAt: passwordData.createdAt,
+            updatedAt: passwordData.updatedAt
           });
         }
       }
     }
     
-    // 按匹配度排序（完全匹配的排在前面）
+    // 按匹配度和更新时间排序
     matches.sort((a, b) => {
-      const aExactMatch = a.url && new URL(a.url).hostname.replace('www.', '') === domain;
-      const bExactMatch = b.url && new URL(b.url).hostname.replace('www.', '') === domain;
-      
-      if (aExactMatch && !bExactMatch) return -1;
-      if (!aExactMatch && bExactMatch) return 1;
-      return 0;
+      // 首先按匹配分数排序
+      if (a.matchScore !== b.matchScore) {
+        return b.matchScore - a.matchScore;
+      }
+      // 然后按更新时间排序（最近更新的排前面）
+      return new Date(b.updatedAt) - new Date(a.updatedAt);
     });
     
-    return new Response(JSON.stringify({ matches }), {
+    return new Response(JSON.stringify({ 
+      matches: matches,
+      total: matches.length,
+      exactMatches: matches.filter(m => m.matchType === 'exact').length,
+      subdomainMatches: matches.filter(m => m.matchType === 'subdomain').length,
+      sitenameMatches: matches.filter(m => m.matchType === 'sitename').length
+    }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
     
@@ -1161,7 +1270,8 @@ async function handleAutoFill(request, env, corsHeaders) {
     console.error('Auto-fill error:', error);
     return new Response(JSON.stringify({ 
       error: `查询失败: ${error.message}`,
-      matches: []
+      matches: [],
+      total: 0
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -1280,7 +1390,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5界面 - 添加测试连接按钮
+// HTML5界面 - 添加重复检查提示
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1918,6 +2028,28 @@ function getHTML5() {
             gap: 0.5rem;
         }
 
+        /* 重复提示 */
+        .duplicate-warning {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            border: 2px solid #f59e0b;
+            border-radius: var(--border-radius-lg);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            color: #92400e;
+        }
+
+        .duplicate-warning h4 {
+            margin: 0 0 0.5rem 0;
+            color: #92400e;
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .duplicate-warning p {
+            margin: 0;
+            font-size: 0.875rem;
+        }
+
         /* 空状态 */
         .empty-state {
             grid-column: 1 / -1;
@@ -2169,6 +2301,13 @@ function getHTML5() {
         <div id="add-password-tab" class="tab-content">
             <div class="form-section">
                 <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">✨ 添加新密码</h2>
+                
+                <!-- 重复检查提示 -->
+                <div id="duplicateWarning" class="duplicate-warning hidden">
+                    <h4>⚠️ 检测到重复账户</h4>
+                    <p id="duplicateMessage"></p>
+                </div>
+                
                 <form id="passwordForm">
                     <div class="form-group">
                         <label for="siteName">🌐 网站名称 *</label>
@@ -2255,7 +2394,7 @@ function getHTML5() {
                     <h4><i class="fas fa-cog"></i> 连接配置</h4>
                     <div class="form-group">
                         <label for="webdavUrl">🌐 WebDAV 地址</label>
-                        <input type="url" id="webdavUrl" class="form-control" placeholder="WEBDAV连接" autocomplete="url">
+                        <input type="url" id="webdavUrl" class="form-control" placeholder="https://webdav.teracloud.jp/dav/" autocomplete="url">
                         <small style="color: var(--text-secondary); margin-top: 0.5rem; display: block;">
                             支持 TeraCloud、坚果云、NextCloud 等 WebDAV 服务
                         </small>
@@ -2384,15 +2523,67 @@ function getHTML5() {
             document.getElementById('passwordForm').addEventListener('submit', handlePasswordSubmit);
             document.getElementById('oauthLoginBtn').addEventListener('click', handleOAuthLogin);
             
+            // 添加重复检查监听器
+            document.getElementById('url').addEventListener('blur', checkForDuplicates);
+            document.getElementById('username').addEventListener('blur', checkForDuplicates);
+            
             document.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape') {
-                    // 可以添加其他快捷键操作
+                    hideDuplicateWarning();
                 }
                 if (e.ctrlKey && e.key === 'k') {
                     e.preventDefault();
                     document.getElementById('searchInput').focus();
                 }
             });
+        }
+
+        // 检查重复账户
+        async function checkForDuplicates() {
+            const url = document.getElementById('url').value;
+            const username = document.getElementById('username').value;
+            
+            if (!url || !username || editingPasswordId) {
+                hideDuplicateWarning();
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/check-duplicate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ url, username })
+                });
+                
+                const result = await response.json();
+                
+                if (result.isDuplicate) {
+                    showDuplicateWarning(result.existing);
+                } else {
+                    hideDuplicateWarning();
+                }
+            } catch (error) {
+                console.error('检查重复失败:', error);
+                hideDuplicateWarning();
+            }
+        }
+
+        // 显示重复警告
+        function showDuplicateWarning(existing) {
+            const warning = document.getElementById('duplicateWarning');
+            const message = document.getElementById('duplicateMessage');
+            
+            message.textContent = \`该网站已存在相同用户名的账户：\${existing.siteName} - \${existing.username}\`;
+            warning.classList.remove('hidden');
+        }
+
+        // 隐藏重复警告
+        function hideDuplicateWarning() {
+            const warning = document.getElementById('duplicateWarning');
+            warning.classList.add('hidden');
         }
 
         // 标签页切换
@@ -2405,6 +2596,9 @@ function getHTML5() {
             event.target.classList.add('active');
             document.getElementById(tabName + '-tab').classList.add('active');
             currentTab = tabName;
+            
+            // 隐藏重复警告
+            hideDuplicateWarning();
             
             // 如果切换到密码管理页面，刷新数据
             if (tabName === 'passwords') {
@@ -2682,6 +2876,9 @@ function getHTML5() {
             document.getElementById('url').value = password.url || '';
             document.getElementById('notes').value = password.notes || '';
             
+            // 隐藏重复警告
+            hideDuplicateWarning();
+            
             // 切换到添加密码标签页
             switchTab('add-password');
             
@@ -2713,7 +2910,7 @@ function getHTML5() {
             }
         }
 
-        // 处理密码表单提交
+        // 处理密码表单提交 - 改进版本，处理重复检查
         async function handlePasswordSubmit(e) {
             e.preventDefault();
             
@@ -2725,6 +2922,11 @@ function getHTML5() {
                 url: document.getElementById('url').value,
                 notes: document.getElementById('notes').value
             };
+            
+            // 如果是编辑模式，添加ID
+            if (editingPasswordId) {
+                formData.id = editingPasswordId;
+            }
             
             try {
                 const url = editingPasswordId ? \`/api/passwords/\${editingPasswordId}\` : '/api/passwords';
@@ -2743,6 +2945,11 @@ function getHTML5() {
                     showNotification(editingPasswordId ? '密码已更新 ✅' : '密码已添加 ✅');
                     clearForm();
                     loadPasswords();
+                } else if (response.status === 409) {
+                    // 处理重复冲突
+                    const result = await response.json();
+                    showDuplicateWarning(result.existing);
+                    showNotification(result.message, 'warning');
                 } else {
                     showNotification('保存失败', 'error');
                 }
@@ -2756,6 +2963,7 @@ function getHTML5() {
             document.getElementById('passwordForm').reset();
             document.getElementById('lengthValue').textContent = '16';
             editingPasswordId = null;
+            hideDuplicateWarning();
             
             // 恢复按钮文本
             const submitBtn = document.querySelector('#passwordForm button[type="submit"]');
