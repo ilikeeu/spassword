@@ -3308,7 +3308,7 @@ function getHTML5() {
             <div class="github-link">
                 <a href="https://github.com/ilikeeu/spassword" target="_blank" rel="noopener noreferrer">
                     <i class="fab fa-github"></i>
-                    spassword - 开源仓库
+                    Spassword - 你的私人密码管家
                 </a>
             </div>
         </article>
