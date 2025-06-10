@@ -129,7 +129,7 @@ async function handleOAuthLogin(request, env, corsHeaders) {
     const state = generateRandomString(32);
 
     // 构建授权URL - 修正路径
-    const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth/authorize`);
+    const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth2/authorize`);
     authUrl.searchParams.set('client_id', env.OAUTH_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
     authUrl.searchParams.set('response_type', 'code');
@@ -298,7 +298,7 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     console.log('Exchanging code for token...');
 
     // 交换授权码获取访问令牌 - 修正路径
-    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth/token`, {
+    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth2/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
