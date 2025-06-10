@@ -3447,7 +3447,7 @@ function getHTML5() {
                     <h4><i class="fas fa-cog"></i> 连接配置</h4>
                     <div class="form-group">
                         <label for="webdavUrl">🌐 WebDAV 地址</label>
-                        <input type="url" id="webdavUrl" class="form-control" placeholder="https://webdav.teracloud.jp/dav/" autocomplete="url">
+                        <input type="url" id="webdavUrl" class="form-control" placeholder="https://" autocomplete="url">
                         <small style="color: var(--text-secondary); margin-top: 0.5rem; display: block;">
                             支持 TeraCloud、坚果云、NextCloud 等 WebDAV 服务
                         </small>
