@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         智能密码管理助手
-// @namespace    https://spassword.pages.dev/
+// @namespace    https://修改为你的密码管理系统地址/
 // @version      1.6.2
 // @description  自动检测和填充密码，支持多账户切换和密码变更检测，防止注册时重复保存。
 // @author       Password Manager Pro
@@ -20,7 +20,7 @@
 
     // 配置
     const CONFIG = {
-        API_BASE: 'https://spassword.pages.dev',
+        API_BASE: 'https://修改为你的密码管理系统地址',
         STORAGE_KEY: 'password_manager_token',
         AUTO_SAVE: true,
         AUTO_FILL: true,
