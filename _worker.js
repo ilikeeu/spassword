@@ -2358,6 +2358,29 @@ function getHTML5() {
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
+        .github-link {
+            margin-top: 20px;
+            text-align: center;
+        }
+        
+        .github-link a {
+            color: #666;
+            text-decoration: none;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: color 0.3s ease;
+        }
+        
+        .github-link a:hover {
+            color: #333;
+        }
+        
+        .github-link i {
+            font-size: 16px;
+        }
+
         .auth-card .logo {
             font-size: 4rem;
             margin-bottom: 1.5rem;
@@ -3280,8 +3303,17 @@ function getHTML5() {
                 <i class="fas fa-sign-in-alt"></i>
                 开始使用 OAuth 登录
             </button>
+            
+            <!-- GitHub 开源仓库链接 -->
+            <div class="github-link">
+                <a href="https://github.com/ilikeeu/spassword" target="_blank" rel="noopener noreferrer">
+                    <i class="fab fa-github"></i>
+                    spassword - 开源仓库
+                </a>
+            </div>
         </article>
     </section>
+
 
     <!-- 主应用界面 -->
     <div id="mainApp" class="app-container hidden">
