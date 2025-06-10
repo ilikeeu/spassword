@@ -49,6 +49,9 @@ export default {
         if (path === '/api/passwords/restore') {
           return handleRestorePassword(request, env, corsHeaders);
         }
+        if (path === '/api/passwords/delete-history') {
+          return handleDeletePasswordHistory(request, env, corsHeaders);
+        }
         return handlePasswords(request, env, corsHeaders);
       }
       
@@ -759,6 +762,83 @@ async function handleRestorePassword(request, env, corsHeaders) {
     console.error('恢复密码失败:', error);
     return new Response(JSON.stringify({ 
       error: '恢复密码失败',
+      message: error.message 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// 删除历史密码记录API - 新增功能
+async function handleDeletePasswordHistory(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const { passwordId, historyId } = await request.json();
+  const userId = session.userId;
+
+  try {
+    // 获取历史记录
+    const historyKey = `password_history_${userId}_${passwordId}`;
+    const historyData = await env.PASSWORD_KV.get(historyKey);
+    
+    if (!historyData) {
+      return new Response(JSON.stringify({ error: '历史记录不存在' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    let history = JSON.parse(historyData);
+    const originalLength = history.length;
+
+    // 如果是删除所有历史记录
+    if (historyId === 'all') {
+      await env.PASSWORD_KV.delete(historyKey);
+      return new Response(JSON.stringify({ 
+        success: true, 
+        message: `已删除所有 ${originalLength} 条历史记录`,
+        deletedCount: originalLength
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    // 删除指定的历史记录
+    history = history.filter(h => h.id !== historyId);
+
+    if (history.length === originalLength) {
+      return new Response(JSON.stringify({ error: '要删除的历史记录不存在' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    // 更新历史记录
+    if (history.length === 0) {
+      await env.PASSWORD_KV.delete(historyKey);
+    } else {
+      await env.PASSWORD_KV.put(historyKey, JSON.stringify(history));
+    }
+
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: '历史记录已删除',
+      deletedCount: 1,
+      remainingCount: history.length
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (error) {
+    console.error('删除历史记录失败:', error);
+    return new Response(JSON.stringify({ 
+      error: '删除历史记录失败',
       message: error.message 
     }), {
       status: 500,
@@ -2166,7 +2246,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5界面 - 修正版本，添加密码历史记录功能
+// HTML5界面 - 修正版本，添加密码历史记录删除功能
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2697,6 +2777,12 @@ function getHTML5() {
             font-weight: 700;
         }
 
+        .modal-header-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
         .close-btn {
             background: none;
             border: none;
@@ -2731,12 +2817,20 @@ function getHTML5() {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
 
         .history-date {
             color: var(--text-secondary);
             font-size: 0.875rem;
             font-weight: 600;
+        }
+
+        .history-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         .history-password {
@@ -3119,6 +3213,21 @@ function getHTML5() {
                 margin: 1rem;
                 max-height: 90vh;
             }
+
+            .history-header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 1rem;
+            }
+
+            .history-actions {
+                justify-content: center;
+            }
+
+            .modal-header-actions {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
         }
 
         /* 工具类 */
@@ -3425,9 +3534,14 @@ function getHTML5() {
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i class="fas fa-history"></i> 密码历史记录</h3>
-                <button class="close-btn" onclick="closeHistoryModal()" type="button">
-                    <i class="fas fa-times"></i>
-                </button>
+                <div class="modal-header-actions">
+                    <button class="btn btn-danger btn-sm" onclick="deleteAllHistory()" type="button" title="删除所有历史记录">
+                        <i class="fas fa-trash-alt"></i> 清空历史
+                    </button>
+                    <button class="close-btn" onclick="closeHistoryModal()" type="button">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
             </div>
             <div id="historyContent">
                 <!-- 历史记录内容将在这里动态生成 -->
@@ -3444,6 +3558,7 @@ function getHTML5() {
         let editingPasswordId = null;
         let selectedFile = null;
         let currentTab = 'passwords';
+        let currentPasswordId = null; // 当前查看历史记录的密码ID
         
         // 分页相关变量
         let currentPage = 1;
@@ -3855,6 +3970,7 @@ function getHTML5() {
 
         // 显示密码历史记录
         async function showPasswordHistory(passwordId) {
+            currentPasswordId = passwordId;
             try {
                 const response = await fetch(\`/api/passwords/\${passwordId}/history\`, {
                     headers: {
@@ -3880,7 +3996,7 @@ function getHTML5() {
             }
         }
 
-        // 渲染密码历史记录
+        // 渲染密码历史记录 - 添加删除按钮
         function renderPasswordHistory(history) {
             const content = document.getElementById('historyContent');
             
@@ -3902,9 +4018,14 @@ function getHTML5() {
                             <i class="fas fa-clock"></i> 
                             \${new Date(entry.changedAt).toLocaleString('zh-CN')}
                         </span>
-                        <button class="btn btn-success btn-sm" onclick="restorePassword('\${entry.passwordId}', '\${entry.id}')" type="button">
-                            <i class="fas fa-undo"></i> 恢复此密码
-                        </button>
+                        <div class="history-actions">
+                            <button class="btn btn-success btn-sm" onclick="restorePassword('\${entry.passwordId}', '\${entry.id}')" type="button" title="恢复此密码">
+                                <i class="fas fa-undo"></i> 恢复
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteHistoryEntry('\${entry.passwordId}', '\${entry.id}')" type="button" title="删除此历史记录">
+                                <i class="fas fa-trash"></i> 删除
+                            </button>
+                        </div>
                     </div>
                     <div class="password-field">
                         <label>🔑 历史密码</label>
@@ -3916,6 +4037,79 @@ function getHTML5() {
                     </div>
                 </div>
             \`).join('');
+        }
+
+        // 删除单个历史记录
+        async function deleteHistoryEntry(passwordId, historyId) {
+            if (!confirm('确定要删除这条历史记录吗？')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/passwords/delete-history', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({
+                        passwordId: passwordId,
+                        historyId: historyId
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('历史记录已删除 🗑️');
+                    // 重新加载历史记录
+                    showPasswordHistory(passwordId);
+                } else {
+                    throw new Error(result.error || '删除失败');
+                }
+            } catch (error) {
+                console.error('删除历史记录失败:', error);
+                showNotification('删除历史记录失败: ' + error.message, 'error');
+            }
+        }
+
+        // 删除所有历史记录
+        async function deleteAllHistory() {
+            if (!currentPasswordId) {
+                showNotification('无法确定密码ID', 'error');
+                return;
+            }
+            
+            if (!confirm('确定要删除所有历史记录吗？此操作无法撤销。')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/passwords/delete-history', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({
+                        passwordId: currentPasswordId,
+                        historyId: 'all'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification(result.message + ' 🗑️');
+                    // 重新加载历史记录
+                    showPasswordHistory(currentPasswordId);
+                } else {
+                    throw new Error(result.error || '删除失败');
+                }
+            } catch (error) {
+                console.error('删除所有历史记录失败:', error);
+                showNotification('删除所有历史记录失败: ' + error.message, 'error');
+            }
         }
 
         // 恢复历史密码
@@ -3955,6 +4149,7 @@ function getHTML5() {
         // 关闭历史记录模态框
         function closeHistoryModal() {
             document.getElementById('historyModal').classList.remove('show');
+            currentPasswordId = null;
         }
 
         // 渲染分页
