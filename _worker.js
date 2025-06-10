@@ -1,4 +1,4 @@
-// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能 + 密码历史管理
+// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth + 分页功能
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -26,7 +26,7 @@ export default {
       if (path === '/api/oauth/login') {
         return handleOAuthLogin(request, env, corsHeaders);
       }
-
+      
       if (path === '/api/oauth/callback') {
         return handleOAuthCallback(request, env, corsHeaders);
       }
@@ -43,14 +43,7 @@ export default {
         if (path.endsWith('/reveal')) {
           return getActualPassword(request, env, corsHeaders);
         }
-        if (path.endsWith('/history')) {
-          return handlePasswordHistory(request, env, corsHeaders);
-        }
         return handlePasswords(request, env, corsHeaders);
-      }
-      
-      if (path === '/api/passwords/restore') {
-        return handleRestorePassword(request, env, corsHeaders);
       }
       
       if (path.startsWith('/api/categories')) {
@@ -73,22 +66,22 @@ export default {
         return handleWebDAV(request, env, corsHeaders);
       }
       
+      // 登录检测和保存API - 改进版本
       if (path === '/api/detect-login') {
         return handleDetectLogin(request, env, corsHeaders);
       }
       
+      // 自动填充API - 支持多账户
       if (path === '/api/auto-fill') {
         return handleAutoFill(request, env, corsHeaders);
       }
       
+      // 账户去重检查API
       if (path === '/api/check-duplicate') {
         return handleCheckDuplicate(request, env, corsHeaders);
       }
       
-      if (path === '/api/update-existing-password') {
-        return handleUpdateExistingPassword(request, env, corsHeaders);
-      }
-      
+      // 新增：获取用户信息API
       if (path === '/api/user') {
         return handleGetUser(request, env, corsHeaders);
       }
@@ -104,71 +97,21 @@ export default {
   }
 };
 
-// OAuth登录处理 - 完全修正版本
+// OAuth登录处理
 async function handleOAuthLogin(request, env, corsHeaders) {
-  try {
-    console.log('OAuth login request received, method:', request.method);
-    
-    // 检查必要的环境变量
-    if (!env.OAUTH_BASE_URL || !env.OAUTH_CLIENT_ID || !env.OAUTH_REDIRECT_URI) {
-      console.error('Missing OAuth configuration:', {
-        OAUTH_BASE_URL: !!env.OAUTH_BASE_URL,
-        OAUTH_CLIENT_ID: !!env.OAUTH_CLIENT_ID,
-        OAUTH_REDIRECT_URI: !!env.OAUTH_REDIRECT_URI
-      });
-      
-      return new Response(JSON.stringify({ 
-        error: 'OAuth configuration missing',
-        details: 'Please configure OAUTH_BASE_URL, OAUTH_CLIENT_ID, and OAUTH_REDIRECT_URI',
-        config: {
-          OAUTH_BASE_URL: env.OAUTH_BASE_URL || 'NOT_SET',
-          OAUTH_CLIENT_ID: env.OAUTH_CLIENT_ID || 'NOT_SET',
-          OAUTH_REDIRECT_URI: env.OAUTH_REDIRECT_URI || 'NOT_SET'
-        }
-      }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
-    }
-
-    const state = generateRandomString(32);
-    
-    // 构建授权URL
-    const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth2/authorize`);
-    authUrl.searchParams.set('client_id', env.OAUTH_CLIENT_ID);
-    authUrl.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
-    authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('state', state);
-    authUrl.searchParams.set('scope', 'read');
-    
-    // 保存state到KV，有效期10分钟
-    await env.PASSWORD_KV.put(`oauth_state_${state}`, 'valid', { expirationTtl: 600 });
-    
-    console.log('Generated OAuth URL:', authUrl.toString());
-    
-    return new Response(JSON.stringify({ 
-      success: true,
-      authUrl: authUrl.toString(),
-      state: state,
-      debug: {
-        baseUrl: env.OAUTH_BASE_URL,
-        clientId: env.OAUTH_CLIENT_ID,
-        redirectUri: env.OAUTH_REDIRECT_URI
-      }
-    }), {
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  } catch (error) {
-    console.error('OAuth login error:', error);
-    return new Response(JSON.stringify({ 
-      error: 'Failed to generate OAuth URL',
-      details: error.message,
-      stack: error.stack
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const state = generateRandomString(32);
+  const authUrl = new URL(`${env.OAUTH_BASE_URL}/oauth/authorize`);
+  
+  authUrl.searchParams.set('client_id', env.OAUTH_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('state', state);
+  
+  await env.PASSWORD_KV.put(`oauth_state_${state}`, 'valid', { expirationTtl: 600 });
+  
+  return new Response(JSON.stringify({ authUrl: authUrl.toString() }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders }
+  });
 }
 
 // OAuth回调处理
@@ -178,39 +121,23 @@ async function handleOAuthCallback(request, env, corsHeaders) {
   const state = url.searchParams.get('state');
   const error = url.searchParams.get('error');
   
-  console.log('OAuth callback received:', { code: !!code, state, error });
-  
   if (error) {
-    return new Response(createErrorPage('OAuth 登录失败', `错误信息: ${error}`), { 
-      status: 400, 
-      headers: { 'Content-Type': 'text/html', ...corsHeaders }
-    });
+    return new Response(`OAuth Error: ${error}`, { status: 400, headers: corsHeaders });
   }
   
   if (!code || !state) {
-    return new Response(createErrorPage('OAuth 参数错误', 'OAuth 回调缺少 code 或 state 参数'), { 
-      status: 400, 
-      headers: { 'Content-Type': 'text/html', ...corsHeaders }
-    });
+    return new Response('Missing code or state', { status: 400, headers: corsHeaders });
   }
   
-  // 验证state
   const storedState = await env.PASSWORD_KV.get(`oauth_state_${state}`);
   if (!storedState) {
-    return new Response(createErrorPage('OAuth State 验证失败', '无效的 state 参数，可能是过期或被篡改'), { 
-      status: 400, 
-      headers: { 'Content-Type': 'text/html', ...corsHeaders }
-    });
+    return new Response('Invalid state', { status: 400, headers: corsHeaders });
   }
   
-  // 删除已使用的state
   await env.PASSWORD_KV.delete(`oauth_state_${state}`);
   
   try {
-    console.log('Exchanging code for token...');
-    
-    // 交换授权码获取访问令牌
-    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth2/token`, {
+    const tokenResponse = await fetch(`${env.OAUTH_BASE_URL}/oauth/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -223,18 +150,12 @@ async function handleOAuthCallback(request, env, corsHeaders) {
       })
     });
     
-    console.log('Token response status:', tokenResponse.status);
-    
     if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      console.error('Token exchange failed:', errorText);
-      throw new Error(`Token exchange failed: ${tokenResponse.status} - ${errorText}`);
+      throw new Error(`Token exchange failed: ${tokenResponse.status}`);
     }
     
     const tokenData = await tokenResponse.json();
-    console.log('Token data received:', { access_token: !!tokenData.access_token });
     
-    // 获取用户信息
     const userResponse = await fetch(`${env.OAUTH_BASE_URL}/api/user`, {
       headers: {
         'Authorization': `Bearer ${tokenData.access_token}`,
@@ -242,50 +163,125 @@ async function handleOAuthCallback(request, env, corsHeaders) {
       }
     });
     
-    console.log('User response status:', userResponse.status);
-    
     if (!userResponse.ok) {
-      const errorText = await userResponse.text();
-      console.error('Failed to get user info:', errorText);
-      throw new Error(`Failed to get user info: ${userResponse.status} - ${errorText}`);
+      throw new Error(`Failed to get user info: ${userResponse.status}`);
     }
     
     const userData = await userResponse.json();
-    console.log('User data received:', { id: userData.id, username: userData.username });
     
-    // 检查用户授权
+    // 检查用户授权 - 新增功能
     if (env.OAUTH_ID && userData.id.toString() !== env.OAUTH_ID) {
-      return new Response(createUnauthorizedPage(userData, env.OAUTH_ID), {
+      return new Response(`
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+          <head>
+            <meta charset="UTF-8">
+            <title>访问被拒绝</title>
+            <style>
+              body { 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                display: flex; 
+                justify-content: center; 
+                align-items: center; 
+                height: 100vh; 
+                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                margin: 0;
+              }
+              .message { 
+                background: white; 
+                padding: 30px; 
+                border-radius: 15px; 
+                text-align: center;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+                max-width: 400px;
+              }
+              h3 { color: #ef4444; margin-bottom: 15px; }
+              p { color: #6b7280; margin-bottom: 20px; }
+              .user-info { 
+                background: #f8fafc; 
+                padding: 15px; 
+                border-radius: 8px; 
+                margin: 15px 0;
+                font-family: monospace;
+                font-size: 14px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="message">
+              <h3>🚫 访问被拒绝</h3>
+              <p>抱歉，您没有访问此密码管理器的权限。</p>
+              <div class="user-info">
+                用户ID: ${userData.id}<br>
+                用户名: ${userData.username}<br>
+                授权ID: ${env.OAUTH_ID || '未设置'}
+              </div>
+              <p style="font-size: 12px;">如需访问权限，请联系管理员。</p>
+            </div>
+          </body>
+        </html>
+      `, {
         status: 403,
         headers: { 'Content-Type': 'text/html', ...corsHeaders }
       });
     }
     
-    // 创建会话令牌
     const sessionToken = generateRandomString(64);
     const userSession = {
       userId: userData.id.toString(),
       username: userData.username,
-      nickname: userData.nickname || userData.username,
-      email: userData.email || '',
-      avatar: userData.avatar_template ? `${env.OAUTH_BASE_URL}${userData.avatar_template}`.replace('{size}', '120') : '',
+      nickname: userData.nickname,
+      email: userData.email,
+      avatar: userData.avatar_url || 'https://yanxuan.nosdn.127.net/233a2a8170847d3287ec058c51cf60a9.jpg',
       loginAt: new Date().toISOString()
     };
     
-    // 保存会话，有效期7天
     await env.PASSWORD_KV.put(`session_${sessionToken}`, JSON.stringify(userSession), { 
       expirationTtl: 86400 * 7
     });
     
-    console.log('Session created for user:', userData.username);
-    
-    return new Response(createSuccessPage(userSession, sessionToken), {
+    return new Response(`
+      <!DOCTYPE html>
+      <html lang="zh-CN">
+        <head>
+          <meta charset="UTF-8">
+          <title>登录成功</title>
+          <style>
+            body { 
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+              display: flex; 
+              justify-content: center; 
+              align-items: center; 
+              height: 100vh; 
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              margin: 0;
+            }
+            .message { 
+              background: white; 
+              padding: 30px; 
+              border-radius: 15px; 
+              text-align: center;
+              box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            }
+          </style>
+        </head>
+        <body>
+          <div class="message">
+            <h3>登录成功，正在跳转...</h3>
+          </div>
+          <script>
+            localStorage.setItem('authToken', '${sessionToken}');
+            setTimeout(() => window.location.href = '/', 1000);
+          </script>
+        </body>
+      </html>
+    `, {
       headers: { 'Content-Type': 'text/html', ...corsHeaders }
     });
     
   } catch (error) {
     console.error('OAuth callback error:', error);
-    return new Response(createErrorPage('登录处理失败', `OAuth 认证过程中发生错误，请稍后重试。\n错误详情: ${error.message}`), { 
+    return new Response(`登录失败: ${error.message}`, { 
       status: 500, 
       headers: { 'Content-Type': 'text/html', ...corsHeaders }
     });
@@ -330,6 +326,27 @@ async function handleAuthVerify(request, env, corsHeaders) {
   });
 }
 
+// 新增：获取用户信息API
+async function handleGetUser(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  return new Response(JSON.stringify({
+    id: session.userId,
+    username: session.username,
+    nickname: session.nickname,
+    email: session.email,
+    avatar: session.avatar
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders }
+  });
+}
+
 // 登出处理
 async function handleLogout(request, env, corsHeaders) {
   const token = request.headers.get('Authorization')?.replace('Bearer ', '');
@@ -343,133 +360,7 @@ async function handleLogout(request, env, corsHeaders) {
   });
 }
 
-// 密码历史记录功能
-async function savePasswordHistory(existingPassword, userId, env) {
-  const historyEntry = {
-    id: generateId(),
-    passwordId: existingPassword.id,
-    oldPassword: existingPassword.password, // 已加密
-    changedAt: new Date().toISOString(),
-    reason: 'password_update'
-  };
-  
-  // 保存到历史记录（保留最近5次变更）
-  const historyKey = `password_history_${userId}_${existingPassword.id}`;
-  const existingHistory = await env.PASSWORD_KV.get(historyKey);
-  let history = existingHistory ? JSON.parse(existingHistory) : [];
-  
-  history.unshift(historyEntry);
-  if (history.length > 5) {
-    history = history.slice(0, 5); // 只保留最近5次
-  }
-  
-  await env.PASSWORD_KV.put(historyKey, JSON.stringify(history));
-}
-
-// 获取密码历史记录API
-async function handlePasswordHistory(request, env, corsHeaders) {
-  const session = await verifySession(request, env);
-  if (!session) {
-    return new Response(JSON.stringify({ error: '未授权' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  
-  const url = new URL(request.url);
-  const pathParts = url.pathname.split('/');
-  const passwordId = pathParts[pathParts.length - 2]; // 获取密码ID
-  const userId = session.userId;
-  
-  try {
-    const historyData = await env.PASSWORD_KV.get(`password_history_${userId}_${passwordId}`);
-    const history = historyData ? JSON.parse(historyData) : [];
-    
-    // 解密历史密码
-    const decryptedHistory = await Promise.all(
-      history.map(async (entry) => ({
-        ...entry,
-        oldPassword: await decryptPassword(entry.oldPassword, userId)
-      }))
-    );
-    
-    return new Response(JSON.stringify({ history: decryptedHistory }), {
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  } catch (error) {
-    return new Response(JSON.stringify({ error: '获取历史记录失败' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-}
-
-// 恢复历史密码API
-async function handleRestorePassword(request, env, corsHeaders) {
-  const session = await verifySession(request, env);
-  if (!session) {
-    return new Response(JSON.stringify({ error: '未授权' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  
-  const { passwordId, historyId } = await request.json();
-  const userId = session.userId;
-  
-  try {
-    // 获取当前密码
-    const currentPasswordData = await env.PASSWORD_KV.get(`password_${userId}_${passwordId}`);
-    if (!currentPasswordData) {
-      return new Response(JSON.stringify({ error: '密码不存在' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
-    }
-    
-    const currentPassword = JSON.parse(currentPasswordData);
-    
-    // 获取历史记录
-    const historyData = await env.PASSWORD_KV.get(`password_history_${userId}_${passwordId}`);
-    const history = historyData ? JSON.parse(historyData) : [];
-    
-    const historyEntry = history.find(h => h.id === historyId);
-    if (!historyEntry) {
-      return new Response(JSON.stringify({ error: '历史记录不存在' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
-    }
-    
-    // 保存当前密码到历史记录
-    await savePasswordHistory(currentPassword, userId, env);
-    
-    // 恢复历史密码
-    const updatedPassword = {
-      ...currentPassword,
-      password: historyEntry.oldPassword, // 历史密码已经是加密的
-      updatedAt: new Date().toISOString(),
-      restoredFrom: historyEntry.id
-    };
-    
-    await env.PASSWORD_KV.put(`password_${userId}_${passwordId}`, JSON.stringify(updatedPassword));
-    
-    return new Response(JSON.stringify({ 
-      success: true, 
-      message: '密码已恢复到历史版本' 
-    }), {
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-    
-  } catch (error) {
-    return new Response(JSON.stringify({ error: '恢复密码失败' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-}
-
-// 密码条目处理 - 增加分页功能和历史记录
+// 密码条目处理 - 增加分页功能
 async function handlePasswords(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -568,36 +459,18 @@ async function handlePasswords(request, env, corsHeaders) {
     case 'POST':
       const newPassword = await request.json();
       
-      // 检查重复 - 修正版本：相同账号不同密码不保存为新账号
-      const duplicateCheck = await checkForDuplicates(newPassword, userId, env, true);
+      // 检查重复 - 改进版本
+      const duplicateCheck = await checkForDuplicates(newPassword, userId, env);
       if (duplicateCheck.isDuplicate) {
-        if (duplicateCheck.isIdentical) {
-          return new Response(JSON.stringify({
-            error: '检测到完全相同的账户',
-            duplicate: true,
-            identical: true,
-            existing: duplicateCheck.existing,
-            message: '该账户已存在且密码相同：' + duplicateCheck.existing.siteName + ' - ' + duplicateCheck.existing.username
-          }), {
-            status: 409,
-            headers: { 'Content-Type': 'application/json', ...corsHeaders }
-          });
-        } else if (duplicateCheck.passwordChanged) {
-          // 相同账号不同密码：不保存为新账号，而是返回更新提示
-          return new Response(JSON.stringify({
-            error: '检测到相同账号的密码变更',
-            duplicate: true,
-            passwordChanged: true,
-            existing: duplicateCheck.existing,
-            newPassword: newPassword.password,
-            message: '检测到相同账号的密码变更，是否更新现有账户的密码？',
-            updateAction: 'update_password',
-            shouldUpdate: true // 标记为应该更新而不是新建
-          }), {
-            status: 409,
-            headers: { 'Content-Type': 'application/json', ...corsHeaders }
-          });
-        }
+        return new Response(JSON.stringify({
+          error: '检测到重复账户',
+          duplicate: true,
+          existing: duplicateCheck.existing,
+          message: `该网站已存在相同用户名的账户：${duplicateCheck.existing.siteName} - ${duplicateCheck.existing.username}`
+        }), {
+          status: 409, // Conflict
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
       }
       
       newPassword.id = generateId();
@@ -642,21 +515,11 @@ async function handlePasswords(request, env, corsHeaders) {
       }
       
       const updateData = await request.json();
-      const existingPasswordData = JSON.parse(existingPassword);
-      const updatedPassword = { ...existingPasswordData, ...updateData };
+      const updatedPassword = { ...JSON.parse(existingPassword), ...updateData };
       updatedPassword.updatedAt = new Date().toISOString();
       
-      // 如果密码发生变更，保存历史记录
       if (updateData.password) {
-        const newEncryptedPassword = await encryptPassword(updateData.password, userId);
-        const oldDecryptedPassword = await decryptPassword(existingPasswordData.password, userId);
-        
-        if (oldDecryptedPassword !== updateData.password) {
-          // 保存历史记录
-          await savePasswordHistory(existingPasswordData, userId, env);
-        }
-        
-        updatedPassword.password = newEncryptedPassword;
+        updatedPassword.password = await encryptPassword(updateData.password, userId);
       }
       
       await env.PASSWORD_KV.put(`password_${userId}_${id}`, JSON.stringify(updatedPassword));
@@ -675,9 +538,7 @@ async function handlePasswords(request, env, corsHeaders) {
         });
       }
       
-      // 删除密码和相关历史记录
       await env.PASSWORD_KV.delete(`password_${userId}_${id}`);
-      await env.PASSWORD_KV.delete(`password_history_${userId}_${id}`);
       
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -691,7 +552,7 @@ async function handlePasswords(request, env, corsHeaders) {
   }
 }
 
-// 检查重复账户 - 修正版本：包括密码检查
+// 检查重复账户 - 改进版本：只检查完全相同的账户（URL+用户名+密码）
 async function checkForDuplicates(newPassword, userId, env, checkPassword = false) {
   if (!newPassword.url || !newPassword.username) {
     return { isDuplicate: false };
@@ -771,6 +632,26 @@ async function checkForDuplicates(newPassword, userId, env, checkPassword = fals
     console.error('检查重复时出错:', error);
     return { isDuplicate: false };
   }
+}
+
+// 账户去重检查API
+async function handleCheckDuplicate(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const data = await request.json();
+  const userId = session.userId;
+  
+  const duplicateCheck = await checkForDuplicates(data, userId, env, false);
+  
+  return new Response(JSON.stringify(duplicateCheck), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders }
+  });
 }
 
 // 获取实际密码
@@ -873,56 +754,8 @@ async function handleGeneratePassword(request, env, corsHeaders) {
   });
 }
 
-// 其他API处理函数的占位符实现
+// 加密导出
 async function handleEncryptedExport(request, env, corsHeaders) {
-  return new Response(JSON.stringify({ error: 'Not implemented yet' }), {
-    status: 501,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
-}
-
-async function handleEncryptedImport(request, env, corsHeaders) {
-  return new Response(JSON.stringify({ error: 'Not implemented yet' }), {
-    status: 501,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
-}
-
-async function handleWebDAV(request, env, corsHeaders) {
-  return new Response(JSON.stringify({ error: 'Not implemented yet' }), {
-    status: 501,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
-}
-
-async function handleDetectLogin(request, env, corsHeaders) {
-  return new Response(JSON.stringify({ error: 'Not implemented yet' }), {
-    status: 501,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
-}
-
-async function handleAutoFill(request, env, corsHeaders) {
-  return new Response(JSON.stringify({ error: 'Not implemented yet' }), {
-    status: 501,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
-}
-
-async function handleCheckDuplicate(request, env, corsHeaders) {
-  return new Response(JSON.stringify({ isDuplicate: false }), {
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
-}
-
-async function handleUpdateExistingPassword(request, env, corsHeaders) {
-  return new Response(JSON.stringify({ error: 'Not implemented yet' }), {
-    status: 501,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
-}
-
-async function handleGetUser(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
     return new Response(JSON.stringify({ error: '未授权' }), {
@@ -931,15 +764,712 @@ async function handleGetUser(request, env, corsHeaders) {
     });
   }
   
+  const { exportPassword } = await request.json();
+  if (!exportPassword) {
+    return new Response(JSON.stringify({ error: '需要导出密码' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const userId = session.userId;
+  const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
+  const passwords = [];
+  
+  for (const key of list.keys) {
+    const data = await env.PASSWORD_KV.get(key.name);
+    if (data) {
+      const passwordData = JSON.parse(data);
+      passwordData.password = await decryptPassword(passwordData.password, userId);
+      passwords.push(passwordData);
+    }
+  }
+  
+  const exportData = {
+    exportDate: new Date().toISOString(),
+    version: '1.0',
+    encrypted: true,
+    passwords: passwords
+  };
+  
+  const encryptedData = await encryptExportData(JSON.stringify(exportData), exportPassword);
+  
   return new Response(JSON.stringify({
-    id: session.userId,
-    username: session.username,
-    nickname: session.nickname,
-    email: session.email,
-    avatar: session.avatar
-  }), {
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    encrypted: true,
+    data: encryptedData,
+    exportDate: new Date().toISOString()
+  }, null, 2), {
+    headers: { 
+      'Content-Type': 'application/json',
+      'Content-Disposition': 'attachment; filename="passwords-encrypted-export.json"',
+      ...corsHeaders 
+    }
   });
+}
+
+// 加密导入
+async function handleEncryptedImport(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const { encryptedData, importPassword } = await request.json();
+  
+  if (!encryptedData || !importPassword) {
+    return new Response(JSON.stringify({ error: '缺少加密数据或密码' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  try {
+    const decryptedText = await decryptExportData(encryptedData, importPassword);
+    const importData = JSON.parse(decryptedText);
+    
+    const userId = session.userId;
+    let imported = 0;
+    let errors = 0;
+    
+    for (const passwordData of importData.passwords || []) {
+      try {
+        const newPassword = {
+          ...passwordData,
+          id: generateId(),
+          userId: userId,
+          importedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        
+        newPassword.password = await encryptPassword(passwordData.password, userId);
+        
+        await env.PASSWORD_KV.put(`password_${userId}_${newPassword.id}`, JSON.stringify(newPassword));
+        imported++;
+      } catch (error) {
+        errors++;
+      }
+    }
+    
+    return new Response(JSON.stringify({ imported, errors }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '解密失败，请检查密码' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// WebDAV处理 - 改进版
+async function handleWebDAV(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const url = new URL(request.url);
+  const action = url.pathname.split('/').pop();
+  
+  switch (action) {
+    case 'config':
+      return handleWebDAVConfig(request, env, corsHeaders, session);
+    case 'test':
+      return handleWebDAVTest(request, env, corsHeaders, session);
+    case 'backup':
+      return handleWebDAVBackup(request, env, corsHeaders, session);
+    case 'restore':
+      return handleWebDAVRestore(request, env, corsHeaders, session);
+    case 'delete':
+      return handleWebDAVDelete(request, env, corsHeaders, session);
+    case 'list':
+      return handleWebDAVList(request, env, corsHeaders, session);
+    default:
+      return new Response('Invalid action', { status: 400, headers: corsHeaders });
+  }
+}
+
+// WebDAV配置管理
+async function handleWebDAVConfig(request, env, corsHeaders, session) {
+  const userId = session.userId;
+  
+  if (request.method === 'GET') {
+    const config = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (config) {
+      const decryptedConfig = JSON.parse(config);
+      // 解密密码
+      decryptedConfig.password = await decryptPassword(decryptedConfig.password, userId);
+      return new Response(JSON.stringify(decryptedConfig), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    return new Response(JSON.stringify({}), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  if (request.method === 'POST') {
+    const config = await request.json();
+    // 加密密码
+    config.password = await encryptPassword(config.password, userId);
+    
+    await env.PASSWORD_KV.put(`webdav_config_${userId}`, JSON.stringify(config));
+    
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  return new Response('Method not allowed', { status: 405, headers: corsHeaders });
+}
+
+// WebDAV测试连接
+async function handleWebDAVTest(request, env, corsHeaders, session) {
+  const { webdavUrl, username, password } = await request.json();
+  
+  if (!webdavUrl || !username || !password) {
+    return new Response(JSON.stringify({ error: '请填写完整的WebDAV配置' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  try {
+    // 测试连接 - 尝试获取根目录信息
+    const testResponse = await fetch(webdavUrl, {
+      method: 'PROPFIND',
+      headers: {
+        'Authorization': `Basic ${btoa(`${username}:${password}`)}`,
+        'Depth': '0',
+        'Content-Type': 'application/xml'
+      },
+      body: `<?xml version="1.0" encoding="utf-8" ?>
+        <D:propfind xmlns:D="DAV:">
+          <D:prop>
+            <D:displayname/>
+            <D:getcontentlength/>
+            <D:getcontenttype/>
+            <D:getlastmodified/>
+            <D:resourcetype/>
+          </D:prop>
+        </D:propfind>`
+    });
+    
+    if (testResponse.ok || testResponse.status === 207) { // 207 Multi-Status 也是成功
+      return new Response(JSON.stringify({ 
+        success: true, 
+        message: 'WebDAV连接成功',
+        status: testResponse.status
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    } else {
+      throw new Error(`连接失败: HTTP ${testResponse.status}`);
+    }
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      success: false,
+      error: `WebDAV连接失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// WebDAV加密备份
+async function handleWebDAVBackup(request, env, corsHeaders, session) {
+  const { backupPassword } = await request.json();
+  
+  if (!backupPassword) {
+    return new Response(JSON.stringify({ error: '需要备份密码' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  try {
+    // 获取WebDAV配置
+    const userId = session.userId;
+    const configData = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (!configData) {
+      return new Response(JSON.stringify({ error: '请先配置WebDAV' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const config = JSON.parse(configData);
+    config.password = await decryptPassword(config.password, userId);
+    
+    // 获取用户所有密码数据
+    const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
+    const passwords = [];
+    
+    for (const key of list.keys) {
+      const data = await env.PASSWORD_KV.get(key.name);
+      if (data) {
+        const passwordData = JSON.parse(data);
+        passwordData.password = await decryptPassword(passwordData.password, userId);
+        passwords.push(passwordData);
+      }
+    }
+    
+    const backupData = {
+      backupDate: new Date().toISOString(),
+      version: '1.0',
+      encrypted: true,
+      user: session.username,
+      passwords: passwords
+    };
+    
+    // 加密备份数据
+    const encryptedData = await encryptExportData(JSON.stringify(backupData), backupPassword);
+    const backupContent = JSON.stringify({
+      encrypted: true,
+      data: encryptedData,
+      backupDate: new Date().toISOString()
+    }, null, 2);
+    
+    const backupFilename = `password-backup-${new Date().toISOString().split('T')[0]}.json`;
+    
+    // 上传到WebDAV
+    const uploadUrl = `${config.webdavUrl.replace(/\/$/, '')}/${backupFilename}`;
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Basic ${btoa(`${config.username}:${config.password}`)}`,
+        'Content-Type': 'application/json'
+      },
+      body: backupContent
+    });
+    
+    if (uploadResponse.ok) {
+      return new Response(JSON.stringify({ 
+        success: true, 
+        message: '加密备份成功',
+        filename: backupFilename
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    } else {
+      throw new Error(`Upload failed: ${uploadResponse.status}`);
+    }
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      error: `备份失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// WebDAV加密恢复
+async function handleWebDAVRestore(request, env, corsHeaders, session) {
+  const { filename, restorePassword } = await request.json();
+  
+  if (!filename || !restorePassword) {
+    return new Response(JSON.stringify({ error: '缺少文件名或恢复密码' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  try {
+    const userId = session.userId;
+    const configData = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (!configData) {
+      return new Response(JSON.stringify({ error: '请先配置WebDAV' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const config = JSON.parse(configData);
+    config.password = await decryptPassword(config.password, userId);
+    
+    // 从WebDAV下载备份文件
+    const downloadUrl = `${config.webdavUrl.replace(/\/$/, '')}/${filename}`;
+    const downloadResponse = await fetch(downloadUrl, {
+      headers: {
+        'Authorization': `Basic ${btoa(`${config.username}:${config.password}`)}`,
+      }
+    });
+    
+    if (!downloadResponse.ok) {
+      throw new Error(`Download failed: ${downloadResponse.status}`);
+    }
+    
+    const encryptedBackup = await downloadResponse.json();
+    
+    // 解密备份数据
+    const decryptedText = await decryptExportData(encryptedBackup.data, restorePassword);
+    const backupData = JSON.parse(decryptedText);
+    
+    let imported = 0;
+    let errors = 0;
+    let duplicates = 0;
+    
+    for (const passwordData of backupData.passwords || []) {
+      try {
+        // 检查是否存在重复（包括密码检查）
+        const duplicateCheck = await checkForDuplicates(passwordData, userId, env, true);
+        
+        if (duplicateCheck.isDuplicate && duplicateCheck.isIdentical) {
+          // 完全相同的记录，跳过
+          duplicates++;
+          continue;
+        }
+        
+        const newPassword = {
+          ...passwordData,
+          id: generateId(),
+          userId: userId,
+          restoredAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        
+        newPassword.password = await encryptPassword(passwordData.password, userId);
+        
+        await env.PASSWORD_KV.put(`password_${userId}_${newPassword.id}`, JSON.stringify(newPassword));
+        imported++;
+      } catch (error) {
+        errors++;
+      }
+    }
+    
+    return new Response(JSON.stringify({ 
+      success: true, 
+      imported, 
+      errors,
+      duplicates,
+      message: `恢复完成：成功 ${imported} 条，跳过重复 ${duplicates} 条，失败 ${errors} 条`
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      error: `恢复失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// WebDAV删除
+async function handleWebDAVDelete(request, env, corsHeaders, session) {
+  const { filename } = await request.json();
+  
+  if (!filename) {
+    return new Response(JSON.stringify({ error: '缺少文件名' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  try {
+    const userId = session.userId;
+    const configData = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (!configData) {
+      return new Response(JSON.stringify({ error: '请先配置WebDAV' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const config = JSON.parse(configData);
+    config.password = await decryptPassword(config.password, userId);
+    
+    const deleteUrl = `${config.webdavUrl.replace(/\/$/, '')}/${filename}`;
+    const deleteResponse = await fetch(deleteUrl, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Basic ${btoa(`${config.username}:${config.password}`)}`,
+      }
+    });
+    
+    if (deleteResponse.ok) {
+      return new Response(JSON.stringify({ 
+        success: true, 
+        message: '删除成功' 
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    } else {
+      throw new Error(`Delete failed: ${deleteResponse.status}`);
+    }
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      error: `删除失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// WebDAV列表
+async function handleWebDAVList(request, env, corsHeaders, session) {
+  try {
+    const userId = session.userId;
+    const configData = await env.PASSWORD_KV.get(`webdav_config_${userId}`);
+    if (!configData) {
+      return new Response(JSON.stringify({ error: '请先配置WebDAV' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
+    const config = JSON.parse(configData);
+    config.password = await decryptPassword(config.password, userId);
+    
+    const listResponse = await fetch(config.webdavUrl, {
+      method: 'PROPFIND',
+      headers: {
+        'Authorization': `Basic ${btoa(`${config.username}:${config.password}`)}`,
+        'Depth': '1'
+      }
+    });
+    
+    if (listResponse.ok) {
+      const xmlText = await listResponse.text();
+      const files = [];
+      const regex = /<d:href>([^<]+\.json)<\/d:href>/g;
+      let match;
+      
+      while ((match = regex.exec(xmlText)) !== null) {
+        const filename = match[1].split('/').pop();
+        if (filename.includes('password-backup')) {
+          files.push(filename);
+        }
+      }
+      
+      return new Response(JSON.stringify({ 
+        success: true, 
+        files 
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    } else {
+      throw new Error(`List failed: ${listResponse.status}`);
+    }
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      error: `获取文件列表失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// 登录检测API - 改进版本，智能处理重复和密码变更
+async function handleDetectLogin(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const { url, username, password } = await request.json();
+  
+  try {
+    const urlObj = new URL(url);
+    const domain = urlObj.hostname.replace('www.', '');
+    const userId = session.userId;
+    
+    // 检查是否已存在该域名和用户名的密码（包括密码检查）
+    const duplicateCheck = await checkForDuplicates({ url, username, password }, userId, env, true);
+    
+    if (duplicateCheck.isDuplicate) {
+      if (duplicateCheck.isIdentical) {
+        // 完全相同的账户，不保存
+        return new Response(JSON.stringify({ 
+          exists: true,
+          identical: true,
+          password: duplicateCheck.existing,
+          message: `账户已存在且密码相同：${duplicateCheck.existing.siteName} - ${duplicateCheck.existing.username}`
+        }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } else if (duplicateCheck.passwordChanged) {
+        // 相同网站和用户名，但密码不同 - 询问是否更新
+        return new Response(JSON.stringify({ 
+          exists: true,
+          passwordChanged: true,
+          existing: duplicateCheck.existing,
+          newPassword: password,
+          message: `检测到密码变更，是否更新保存的密码？`,
+          updateAction: 'update_password'
+        }), {
+          status: 200, // 不是错误，而是需要用户确认
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+    }
+    
+    // 如果不存在重复，创建新的密码条目
+    const newPassword = {
+      id: generateId(),
+      userId: userId,
+      siteName: domain,
+      username: username,
+      password: await encryptPassword(password, userId),
+      url: url,
+      category: '自动保存',
+      notes: '由浏览器扩展自动保存',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    await env.PASSWORD_KV.put(`password_${userId}_${newPassword.id}`, JSON.stringify(newPassword));
+    
+    return new Response(JSON.stringify({ 
+      exists: false, 
+      saved: true,
+      password: { ...newPassword, password: '••••••••' },
+      message: '新账户已自动保存'
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+    
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      error: `处理失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// 自动填充API - 改进版本，支持多账户选择
+async function handleAutoFill(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  const { url } = await request.json();
+  
+  try {
+    const urlObj = new URL(url);
+    const domain = urlObj.hostname.replace('www.', '');
+    
+    const userId = session.userId;
+    const list = await env.PASSWORD_KV.list({ prefix: `password_${userId}_` });
+    const matches = [];
+    
+    for (const key of list.keys) {
+      const data = await env.PASSWORD_KV.get(key.name);
+      if (data) {
+        const passwordData = JSON.parse(data);
+        
+        // 改进匹配逻辑：检查多种匹配方式
+        let isMatch = false;
+        let matchType = '';
+        let matchScore = 0;
+        
+        // 1. 检查完整URL匹配
+        if (passwordData.url) {
+          try {
+            const savedUrlObj = new URL(passwordData.url);
+            const savedDomain = savedUrlObj.hostname.replace('www.', '');
+            
+            // 精确域名匹配 (最高优先级)
+            if (savedDomain === domain) {
+              isMatch = true;
+              matchType = 'exact';
+              matchScore = 100;
+            }
+            // 子域名匹配
+            else if (domain.includes(savedDomain) || savedDomain.includes(domain)) {
+              isMatch = true;
+              matchType = 'subdomain';
+              matchScore = 80;
+            }
+          } catch (e) {
+            // URL解析失败，继续其他匹配方式
+          }
+        }
+        
+        // 2. 检查网站名称匹配
+        if (!isMatch && passwordData.siteName) {
+          const siteName = passwordData.siteName.toLowerCase();
+          const currentDomain = domain.toLowerCase();
+          
+          // 网站名称包含当前域名或当前域名包含网站名称
+          if (siteName.includes(currentDomain) || currentDomain.includes(siteName)) {
+            isMatch = true;
+            matchType = 'sitename';
+            matchScore = 60;
+          }
+        }
+        
+        if (isMatch) {
+          // 解密密码并返回
+          const decryptedPassword = await decryptPassword(passwordData.password, userId);
+          matches.push({
+            id: passwordData.id,
+            siteName: passwordData.siteName,
+            username: passwordData.username,
+            password: decryptedPassword,
+            url: passwordData.url,
+            category: passwordData.category,
+            notes: passwordData.notes,
+            matchType: matchType,
+            matchScore: matchScore,
+            createdAt: passwordData.createdAt,
+            updatedAt: passwordData.updatedAt
+          });
+        }
+      }
+    }
+    
+    // 按匹配度和更新时间排序
+    matches.sort((a, b) => {
+      // 首先按匹配分数排序
+      if (a.matchScore !== b.matchScore) {
+        return b.matchScore - a.matchScore;
+      }
+      // 然后按更新时间排序（最近更新的排前面）
+      return new Date(b.updatedAt) - new Date(a.updatedAt);
+    });
+    
+    return new Response(JSON.stringify({ 
+      matches: matches,
+      total: matches.length,
+      exactMatches: matches.filter(m => m.matchType === 'exact').length,
+      subdomainMatches: matches.filter(m => m.matchType === 'subdomain').length,
+      sitenameMatches: matches.filter(m => m.matchType === 'sitename').length
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+    
+  } catch (error) {
+    console.error('Auto-fill error:', error);
+    return new Response(JSON.stringify({ 
+      error: `查询失败: ${error.message}`,
+      matches: [],
+      total: 0
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
 }
 
 // 工具函数
@@ -1005,6 +1535,47 @@ async function decryptPassword(encryptedPassword, userId) {
   }
 }
 
+async function encryptExportData(data, password) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password.slice(0, 32).padEnd(32, '0')),
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt']
+  );
+  
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(data)
+  );
+  
+  return btoa(String.fromCharCode(...iv) + String.fromCharCode(...new Uint8Array(encrypted)));
+}
+
+async function decryptExportData(encryptedData, password) {
+  const data = atob(encryptedData);
+  const iv = new Uint8Array(data.slice(0, 12).split('').map(c => c.charCodeAt(0)));
+  const encrypted = new Uint8Array(data.slice(12).split('').map(c => c.charCodeAt(0)));
+  
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password.slice(0, 32).padEnd(32, '0')),
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt']
+  );
+  
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    encrypted
+  );
+  
+  return new TextDecoder().decode(decrypted);
+}
+
 function generateRandomString(length) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
@@ -1021,181 +1592,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML页面生成函数
-function createErrorPage(title, message) {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8">
-    <title>${title}</title>
-    <style>
-      body { 
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-        display: flex; 
-        justify-content: center; 
-        align-items: center; 
-        height: 100vh; 
-        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        margin: 0;
-      }
-      .message { 
-        background: white; 
-        padding: 30px; 
-        border-radius: 15px; 
-        text-align: center;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-        max-width: 500px;
-      }
-      h3 { color: #ef4444; margin-bottom: 15px; }
-      p { color: #6b7280; margin-bottom: 20px; white-space: pre-line; }
-    </style>
-  </head>
-  <body>
-    <div class="message">
-      <h3>❌ ${title}</h3>
-      <p>${message}</p>
-      <button onclick="window.location.href='/'" style="padding: 10px 20px; background: #6366f1; color: white; border: none; border-radius: 5px; cursor: pointer;">返回首页</button>
-    </div>
-  </body>
-</html>`;
-}
-
-function createUnauthorizedPage(userData, authorizedId) {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8">
-    <title>访问被拒绝</title>
-    <style>
-      body { 
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-        display: flex; 
-        justify-content: center; 
-        align-items: center; 
-        height: 100vh; 
-        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        margin: 0;
-      }
-      .message { 
-        background: white; 
-        padding: 30px; 
-        border-radius: 15px; 
-        text-align: center;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-        max-width: 400px;
-      }
-      h3 { color: #ef4444; margin-bottom: 15px; }
-      p { color: #6b7280; margin-bottom: 20px; }
-      .user-info { 
-        background: #f8fafc; 
-        padding: 15px; 
-        border-radius: 8px; 
-        margin: 15px 0;
-        font-family: monospace;
-        font-size: 14px;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="message">
-      <h3>🚫 访问被拒绝</h3>
-      <p>抱歉，您没有访问此密码管理器的权限。</p>
-      <div class="user-info">
-        用户ID: ${userData.id}<br>
-        用户名: ${userData.username}<br>
-        授权ID: ${authorizedId || '未设置'}
-      </div>
-      <p style="font-size: 12px;">如需访问权限，请联系管理员。</p>
-      <button onclick="window.location.href='/'" style="padding: 10px 20px; background: #ef4444; color: white; border: none; border-radius: 5px; cursor: pointer;">返回首页</button>
-    </div>
-  </body>
-</html>`;
-}
-
-function createSuccessPage(userSession, sessionToken) {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8">
-    <title>登录成功</title>
-    <style>
-      body { 
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-        display: flex; 
-        justify-content: center; 
-        align-items: center; 
-        height: 100vh; 
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        margin: 0;
-      }
-      .message { 
-        background: white; 
-        padding: 30px; 
-        border-radius: 15px; 
-        text-align: center;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-        max-width: 400px;
-      }
-      h3 { color: #10b981; margin-bottom: 15px; }
-      .user-info {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-        margin: 20px 0;
-        padding: 15px;
-        background: #f8fafc;
-        border-radius: 10px;
-      }
-      .avatar {
-        width: 50px;
-        height: 50px;
-        border-radius: 50%;
-        background: linear-gradient(135deg, #6366f1, #8b5cf6);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: bold;
-        font-size: 18px;
-      }
-      .loading {
-        display: inline-block;
-        width: 20px;
-        height: 20px;
-        border: 3px solid #f3f3f3;
-        border-top: 3px solid #10b981;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-      }
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="message">
-      <h3>✅ 登录成功</h3>
-      <div class="user-info">
-        <div class="avatar">${userSession.avatar ? `<img src="${userSession.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : userSession.nickname.charAt(0).toUpperCase()}</div>
-        <div>
-          <div style="font-weight: bold;">${userSession.nickname}</div>
-          <div style="color: #6b7280; font-size: 14px;">${userSession.email}</div>
-        </div>
-      </div>
-      <p><div class="loading"></div> 正在跳转到密码管理器...</p>
-    </div>
-    <script>
-      localStorage.setItem('authToken', '${sessionToken}');
-      setTimeout(() => {
-        window.location.href = '/';
-      }, 3000);
-    </script>
-  </body>
-</html>`;
-}
-
-// HTML5界面 - 完整版本
+// HTML5界面 - 增加分页功能
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1416,12 +1813,6 @@ function getHTML5() {
             box-shadow: var(--shadow-md);
         }
 
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-
         .btn-primary {
             background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
             color: white;
@@ -1565,98 +1956,66 @@ function getHTML5() {
             border-color: var(--primary-color);
         }
 
-        /* 密码网格 - 改为列表形式 */
-        .passwords-list {
+        /* 密码网格 */
+        .passwords-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(23.75rem, 1fr));
+            gap: 1.5rem;
+        }
+
+        /* 密码卡片 */
+        .password-card {
             background: var(--card-background);
             backdrop-filter: blur(20px);
             border-radius: var(--border-radius-xl);
+            padding: 1.75rem;
             box-shadow: var(--shadow-lg);
+            transition: all var(--transition-normal);
+            position: relative;
             border: 1px solid rgba(255, 255, 255, 0.2);
             overflow: hidden;
         }
 
-        /* 密码条目 - 列表形式 */
-        .password-item {
-            padding: 1.5rem;
-            border-bottom: 1px solid var(--border-color);
-            transition: all var(--transition-normal);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: white;
+        .password-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
         }
 
-        .password-item:last-child {
-            border-bottom: none;
+        .password-card:hover {
+            transform: translateY(-8px);
+            box-shadow: var(--shadow-xl);
         }
 
-        .password-item:hover {
-            background: #f8fafc;
-            transform: translateX(4px);
-        }
-
-        .password-item-content {
+        .password-header {
             display: flex;
             align-items: center;
             gap: 1rem;
-            flex: 1;
+            margin-bottom: 1.5rem;
         }
 
-        .password-item-icon {
-            width: 3rem;
-            height: 3rem;
+        .site-icon {
+            width: 3.5rem;
+            height: 3.5rem;
             border-radius: var(--border-radius-lg);
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 1.25rem;
+            font-size: 1.5rem;
             box-shadow: var(--shadow-md);
-            flex-shrink: 0;
         }
 
-        .password-item-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .password-item-title {
-            font-weight: 700;
+        .password-meta h3 {
             color: var(--text-primary);
-            margin-bottom: 0.25rem;
-            font-size: 1.125rem;
-        }
-
-        .password-item-username {
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-            margin-bottom: 0.25rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .password-item-url {
-            color: var(--info-color);
-            font-size: 0.75rem;
-            text-decoration: none;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .password-item-url:hover {
-            text-decoration: underline;
-        }
-
-        .password-item-meta {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            gap: 0.5rem;
-            margin-right: 1rem;
-            flex-shrink: 0;
+            margin-bottom: 0.5rem;
+            font-size: 1.25rem;
+            font-weight: 700;
         }
 
         .category-badge {
@@ -1666,27 +2025,49 @@ function getHTML5() {
             border-radius: var(--border-radius-xl);
             font-size: 0.75rem;
             font-weight: 600;
-            white-space: nowrap;
+            display: inline-block;
         }
 
-        .password-item-date {
-            font-size: 0.75rem;
-            color: var(--text-muted);
+        .password-field {
+            margin: 1rem 0;
         }
 
-        .password-item-actions {
+        .password-field label {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 0.375rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .password-field .value {
+            color: var(--text-primary);
+            font-size: 1rem;
+            word-break: break-all;
+            font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
+        }
+
+        .password-field .value a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .password-field .value a:hover {
+            text-decoration: underline;
+        }
+
+        .password-actions {
             display: flex;
             gap: 0.5rem;
-            flex-shrink: 0;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
         }
 
-        .password-item-actions .btn {
-            padding: 0.5rem;
-            border-radius: 50%;
-            width: 2.5rem;
-            height: 2.5rem;
-            display: flex;
-            align-items: center;
+        .password-actions .btn {
+            flex: 1;
+            min-width: 5rem;
             justify-content: center;
         }
 
@@ -1841,8 +2222,76 @@ function getHTML5() {
             color: var(--primary-color);
         }
 
+        /* WebDAV配置 */
+        .webdav-section {
+            background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+            padding: 1.5rem;
+            border-radius: var(--border-radius-lg);
+            margin-bottom: 1.5rem;
+            border: 2px solid #bae6fd;
+        }
+
+        .webdav-section h4 {
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+            font-size: 1.125rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .backup-files {
+            max-height: 12.5rem;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius-sm);
+            padding: 0.75rem;
+            background: white;
+        }
+
+        .backup-file {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .backup-file:last-child {
+            border-bottom: none;
+        }
+
+        .backup-file-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* 重复提示 */
+        .duplicate-warning {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            border: 2px solid #f59e0b;
+            border-radius: var(--border-radius-lg);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            color: #92400e;
+        }
+
+        .duplicate-warning h4 {
+            margin: 0 0 0.5rem 0;
+            color: #92400e;
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .duplicate-warning p {
+            margin: 0;
+            font-size: 0.875rem;
+        }
+
         /* 空状态 */
         .empty-state {
+            grid-column: 1 / -1;
             text-align: center;
             padding: 5rem 1.25rem;
             color: var(--text-secondary);
@@ -1919,43 +2368,6 @@ function getHTML5() {
             100% { transform: rotate(360deg); }
         }
 
-        /* 调试信息样式 */
-        .debug-info {
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            border-radius: var(--border-radius-lg);
-            padding: 1rem;
-            margin-top: 1rem;
-            font-family: monospace;
-            font-size: 0.875rem;
-            color: #374151;
-            max-height: 300px;
-            overflow-y: auto;
-            text-align: left;
-        }
-
-        .debug-info h4 {
-            margin: 0 0 0.5rem 0;
-            color: #1f2937;
-            font-family: inherit;
-        }
-
-        .debug-entry {
-            margin-bottom: 0.25rem;
-            padding: 0.25rem;
-            border-radius: 4px;
-        }
-
-        .debug-entry.error {
-            background: #fef2f2;
-            color: #991b1b;
-        }
-
-        .debug-entry.success {
-            background: #f0fdf4;
-            color: #166534;
-        }
-
         /* 响应式设计 */
         @media (max-width: 768px) {
             .app-container { 
@@ -1981,24 +2393,12 @@ function getHTML5() {
                 min-width: auto;
             }
             
-            .password-item {
+            .passwords-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .password-actions {
                 flex-direction: column;
-                align-items: stretch;
-                gap: 1rem;
-            }
-            
-            .password-item-content {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-            
-            .password-item-meta {
-                align-items: flex-start;
-                margin-right: 0;
-            }
-            
-            .password-item-actions {
-                justify-content: center;
             }
 
             .generator-options {
@@ -2076,12 +2476,6 @@ function getHTML5() {
                 <i class="fas fa-sign-in-alt"></i>
                 开始使用 OAuth 登录
             </button>
-            
-            <!-- 调试信息区域 -->
-            <div id="debugInfo" class="debug-info hidden">
-                <h4>🔧 调试信息</h4>
-                <div id="debugContent"></div>
-            </div>
         </article>
     </section>
 
@@ -2114,8 +2508,11 @@ function getHTML5() {
             <div class="nav-tab" onclick="switchTab('add-password')">
                 <i class="fas fa-plus"></i> 添加密码
             </div>
-            <div class="nav-tab" onclick="switchTab('tools')">
-                <i class="fas fa-tools"></i> 工具
+            <div class="nav-tab" onclick="switchTab('backup')">
+                <i class="fas fa-cloud"></i> 云备份
+            </div>
+            <div class="nav-tab" onclick="switchTab('import-export')">
+                <i class="fas fa-exchange-alt"></i> 导入导出
             </div>
         </nav>
 
@@ -2142,8 +2539,8 @@ function getHTML5() {
 
             <!-- 密码列表 -->
             <main>
-                <section class="passwords-list" id="passwordsList">
-                    <!-- 密码条目将在这里动态生成 -->
+                <section class="passwords-grid" id="passwordsGrid">
+                    <!-- 密码卡片将在这里动态生成 -->
                 </section>
                 <!-- 分页容器将在这里动态生成 -->
             </main>
@@ -2153,6 +2550,12 @@ function getHTML5() {
         <div id="add-password-tab" class="tab-content">
             <div class="form-section">
                 <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">✨ 添加新密码</h2>
+                
+                <!-- 重复检查提示 -->
+                <div id="duplicateWarning" class="duplicate-warning hidden">
+                    <h4>⚠️ 检测到重复账户</h4>
+                    <p id="duplicateMessage"></p>
+                </div>
                 
                 <form id="passwordForm">
                     <div class="form-group">
@@ -2231,32 +2634,92 @@ function getHTML5() {
             </div>
         </div>
 
-        <!-- 工具标签页 -->
-        <div id="tools-tab" class="tab-content">
+        <!-- 云备份标签页 -->
+        <div id="backup-tab" class="tab-content">
+            <!-- WebDAV配置 -->
             <div class="form-section">
-                <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">🛠️ 工具集合</h2>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
-                    <div style="padding: 1.5rem; background: linear-gradient(135deg, #f0f9ff, #e0f2fe); border-radius: var(--border-radius-lg); border: 2px solid #bae6fd;">
-                        <h3 style="color: var(--text-primary); margin-bottom: 1rem;">🎲 密码生成器</h3>
-                        <p style="color: var(--text-secondary); margin-bottom: 1rem;">生成安全的随机密码</p>
-                        <button class="btn btn-info" onclick="showNotification('功能开发中...', 'info')" type="button">
-                            <i class="fas fa-magic"></i> 打开工具
+                <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">☁️ WebDAV 云备份配置</h2>
+                <div class="webdav-section">
+                    <h4><i class="fas fa-cog"></i> 连接配置</h4>
+                    <div class="form-group">
+                        <label for="webdavUrl">🌐 WebDAV 地址</label>
+                        <input type="url" id="webdavUrl" class="form-control" placeholder="https://webdav.teracloud.jp/dav/" autocomplete="url">
+                        <small style="color: var(--text-secondary); margin-top: 0.5rem; display: block;">
+                            支持 TeraCloud、坚果云、NextCloud 等 WebDAV 服务
+                        </small>
+                    </div>
+                    <div class="form-group">
+                        <label for="webdavUsername">👤 用户名</label>
+                        <input type="text" id="webdavUsername" class="form-control" placeholder="WebDAV用户名" autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="webdavPassword">🔑 密码</label>
+                        <input type="password" id="webdavPassword" class="form-control" placeholder="WebDAV密码" autocomplete="current-password">
+                    </div>
+                    <div class="flex gap-3 mt-4">
+                        <button class="btn btn-info" onclick="testWebDAVConnection()" type="button">
+                            <i class="fas fa-wifi"></i> 测试连接
+                        </button>
+                        <button class="btn btn-primary" onclick="saveWebDAVConfig()" type="button">
+                            <i class="fas fa-save"></i> 保存配置
+                        </button>
+                        <button class="btn btn-secondary" onclick="loadWebDAVFiles()" type="button">
+                            <i class="fas fa-list"></i> 列出文件
                         </button>
                     </div>
-                    <div style="padding: 1.5rem; background: linear-gradient(135deg, #f0fdf4, #dcfce7); border-radius: var(--border-radius-lg); border: 2px solid #bbf7d0;">
-                        <h3 style="color: var(--text-primary); margin-bottom: 1rem;">📤 数据导出</h3>
-                        <p style="color: var(--text-secondary); margin-bottom: 1rem;">导出密码数据</p>
-                        <button class="btn btn-success" onclick="showNotification('功能开发中...', 'info')" type="button">
-                            <i class="fas fa-download"></i> 导出数据
-                        </button>
+                </div>
+                
+                <!-- 备份操作 -->
+                <div class="webdav-section">
+                    <h4><i class="fas fa-cloud-upload-alt"></i> 创建加密备份</h4>
+                    <div class="form-group">
+                        <label for="backupPassword">🔐 备份密码</label>
+                        <input type="password" id="backupPassword" class="form-control" placeholder="设置备份密码" autocomplete="new-password">
                     </div>
-                    <div style="padding: 1.5rem; background: linear-gradient(135deg, #fefbf2, #fef3c7); border-radius: var(--border-radius-lg); border: 2px solid #fde68a;">
-                        <h3 style="color: var(--text-primary); margin-bottom: 1rem;">📥 数据导入</h3>
-                        <p style="color: var(--text-secondary); margin-bottom: 1rem;">导入密码数据</p>
-                        <button class="btn btn-warning" onclick="showNotification('功能开发中...', 'info')" type="button">
-                            <i class="fas fa-upload"></i> 导入数据
-                        </button>
+                    <button class="btn btn-success w-full" onclick="createWebDAVBackup()" type="button">
+                        <i class="fas fa-cloud-upload-alt"></i> 创建加密备份
+                    </button>
+                </div>
+
+                <!-- 备份文件列表 -->
+                <div class="webdav-section">
+                    <h4><i class="fas fa-history"></i> 备份文件</h4>
+                    <div class="backup-files" id="backupFilesList">
+                        <p class="text-center" style="color: #6b7280;">点击"列出文件"查看备份</p>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导入导出标签页 -->
+        <div id="import-export-tab" class="tab-content">
+            <div class="form-section">
+                <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">📤 加密导出</h2>
+                <div class="form-group">
+                    <label for="exportPassword">🔐 导出密码</label>
+                    <input type="password" id="exportPassword" class="form-control" placeholder="设置导出密码" autocomplete="new-password">
+                </div>
+                <button class="btn btn-primary w-full" onclick="exportData()" type="button">
+                    <i class="fas fa-download"></i> 加密导出数据
+                </button>
+            </div>
+
+            <div class="form-section" style="margin-top: 1.5rem;">
+                <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">📥 加密导入</h2>
+                <div class="form-group">
+                    <label for="importFile">📁 选择加密文件</label>
+                    <input type="file" id="importFile" class="form-control" accept=".json" onchange="handleFileSelect()">
+                </div>
+                <div id="encryptedImportForm" class="hidden">
+                    <div class="form-group">
+                        <label for="importPassword">🔐 导入密码</label>
+                        <input type="password" id="importPassword" class="form-control" placeholder="输入导入密码" autocomplete="off">
+                    </div>
+                </div>
+                <div class="flex gap-4 mt-4">
+                    <button class="btn btn-primary w-full" onclick="importData()" type="button">
+                        <i class="fas fa-upload"></i> 开始导入
+                    </button>
                 </div>
             </div>
         </div>
@@ -2269,6 +2732,7 @@ function getHTML5() {
         let passwords = [];
         let categories = [];
         let editingPasswordId = null;
+        let selectedFile = null;
         let currentTab = 'passwords';
         
         // 分页相关变量
@@ -2277,9 +2741,6 @@ function getHTML5() {
         let pageLimit = 50;
         let searchQuery = '';
         let categoryFilter = '';
-
-        // 调试模式
-        let debugMode = false;
 
         // 创建粒子背景
         function createParticles() {
@@ -2295,120 +2756,102 @@ function getHTML5() {
             }
         }
 
-        // 调试函数
-        function addDebugInfo(message, type = 'info') {
-            if (!debugMode) return;
-            
-            const debugContent = document.getElementById('debugContent');
-            const timestamp = new Date().toLocaleTimeString();
-            const debugEntry = document.createElement('div');
-            debugEntry.className = 'debug-entry ' + type;
-            debugEntry.textContent = timestamp + ': ' + message;
-            debugContent.appendChild(debugEntry);
-            
-            // 自动滚动到底部
-            debugContent.scrollTop = debugContent.scrollHeight;
-            
-            // 显示调试信息区域
-            document.getElementById('debugInfo').classList.remove('hidden');
-            
-            // 限制条目数量
-            if (debugContent.children.length > 50) {
-                debugContent.removeChild(debugContent.firstChild);
-            }
-        }
-
-        // 切换调试模式
-        function toggleDebugMode() {
-            debugMode = !debugMode;
-            const debugInfo = document.getElementById('debugInfo');
-            if (debugMode) {
-                debugInfo.classList.remove('hidden');
-                addDebugInfo('调试模式已启用', 'success');
-            } else {
-                debugInfo.classList.add('hidden');
-            }
-        }
-
         // 初始化应用
         document.addEventListener('DOMContentLoaded', function() {
             createParticles();
             
-            // 检查URL参数是否有调试模式
-            const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.get('debug') === 'true') {
-                toggleDebugMode();
-            }
-            
-            addDebugInfo('应用初始化开始');
-            addDebugInfo('当前authToken: ' + (authToken ? '已存在' : '不存在'));
-            
             if (authToken) {
-                addDebugInfo('尝试验证现有认证令牌');
                 verifyAuth();
             } else {
-                addDebugInfo('显示登录界面');
                 showAuthSection();
             }
             
             setupEventListeners();
         });
 
-        // 设置事件监听器
+        // 设置事件监听器 - 支持分页
         function setupEventListeners() {
-            const loginBtn = document.getElementById('oauthLoginBtn');
-            if (loginBtn) {
-                loginBtn.addEventListener('click', handleOAuthLogin);
-                addDebugInfo('OAuth登录按钮事件监听器已设置');
-            }
-            
             const searchInput = document.getElementById('searchInput');
             const categoryFilter = document.getElementById('categoryFilter');
             
-            if (searchInput) {
-                // 防抖搜索
-                let searchTimeout;
-                searchInput.addEventListener('input', function() {
-                    clearTimeout(searchTimeout);
-                    searchTimeout = setTimeout(() => {
-                        filterPasswords();
-                    }, 500);
-                });
-            }
+            // 防抖搜索
+            let searchTimeout;
+            searchInput.addEventListener('input', function() {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    filterPasswords();
+                }, 500);
+            });
             
-            if (categoryFilter) {
-                categoryFilter.addEventListener('change', filterPasswords);
-            }
+            categoryFilter.addEventListener('change', filterPasswords);
             
-            const passwordForm = document.getElementById('passwordForm');
-            if (passwordForm) {
-                passwordForm.addEventListener('submit', handlePasswordSubmit);
-            }
+            document.getElementById('passwordLength').addEventListener('input', function() {
+                document.getElementById('lengthValue').textContent = this.value;
+            });
+            document.getElementById('passwordForm').addEventListener('submit', handlePasswordSubmit);
+            document.getElementById('oauthLoginBtn').addEventListener('click', handleOAuthLogin);
             
-            const passwordLength = document.getElementById('passwordLength');
-            if (passwordLength) {
-                passwordLength.addEventListener('input', function() {
-                    document.getElementById('lengthValue').textContent = this.value;
-                });
-            }
+            // 添加重复检查监听器
+            document.getElementById('url').addEventListener('blur', checkForDuplicates);
+            document.getElementById('username').addEventListener('blur', checkForDuplicates);
             
             document.addEventListener('keydown', function(e) {
-                // 调试模式快捷键
-                if (e.ctrlKey && e.shiftKey && e.key === 'D') {
-                    e.preventDefault();
-                    toggleDebugMode();
-                }
                 if (e.key === 'Escape') {
-                    // 关闭模态框等
+                    hideDuplicateWarning();
                 }
                 if (e.ctrlKey && e.key === 'k') {
                     e.preventDefault();
-                    const searchInput = document.getElementById('searchInput');
-                    if (searchInput) {
-                        searchInput.focus();
-                    }
+                    document.getElementById('searchInput').focus();
                 }
             });
+        }
+
+        // 检查重复账户
+        async function checkForDuplicates() {
+            const url = document.getElementById('url').value;
+            const username = document.getElementById('username').value;
+            
+            if (!url || !username || editingPasswordId) {
+                hideDuplicateWarning();
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/check-duplicate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ url, username })
+                });
+                
+                const result = await response.json();
+                
+                if (result.isDuplicate) {
+                    showDuplicateWarning(result.existing);
+                } else {
+                    hideDuplicateWarning();
+                }
+            } catch (error) {
+                console.error('检查重复失败:', error);
+                hideDuplicateWarning();
+            }
+        }
+
+        // 显示重复警告
+        function showDuplicateWarning(existing) {
+            const warning = document.getElementById('duplicateWarning');
+            const message = document.getElementById('duplicateMessage');
+            
+            message.textContent = \`该网站已存在相同用户名的账户：\${existing.siteName} - \${existing.username}\`;
+            warning.classList.remove('hidden');
+        }
+
+        // 隐藏重复警告
+        function hideDuplicateWarning() {
+            const warning = document.getElementById('duplicateWarning');
+            warning.classList.add('hidden');
         }
 
         // 标签页切换
@@ -2422,78 +2865,33 @@ function getHTML5() {
             document.getElementById(tabName + '-tab').classList.add('active');
             currentTab = tabName;
             
-            addDebugInfo('切换到标签页: ' + tabName);
+            // 隐藏重复警告
+            hideDuplicateWarning();
             
             // 如果切换到密码管理页面，刷新数据
             if (tabName === 'passwords') {
                 loadPasswords(1);
+            } else if (tabName === 'backup') {
+                loadWebDAVConfig();
             }
         }
 
         // OAuth登录处理
         async function handleOAuthLogin() {
             const button = document.getElementById('oauthLoginBtn');
-            const originalText = button.innerHTML;
-            
             try {
-                addDebugInfo('开始 OAuth 登录流程');
-                
-                button.innerHTML = '<div class="loading"></div> 正在获取授权链接...';
+                button.innerHTML = '<div class="loading"></div> 正在跳转...';
                 button.disabled = true;
                 
-                addDebugInfo('发送请求到 /api/oauth/login');
-                
                 const response = await fetch('/api/oauth/login', {
-                    method: 'POST',
-                    headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({})
+                    method: 'GET'
                 });
                 
-                addDebugInfo('OAuth 登录响应状态: ' + response.status);
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    addDebugInfo('OAuth 登录失败响应: ' + errorText, 'error');
-                    throw new Error('HTTP ' + response.status + ': ' + errorText);
-                }
-                
                 const data = await response.json();
-                addDebugInfo('OAuth 登录响应数据: ' + JSON.stringify(data), 'success');
-                
-                if (data.error) {
-                    addDebugInfo('OAuth 配置错误: ' + data.error, 'error');
-                    if (data.config) {
-                        addDebugInfo('OAuth 配置详情: ' + JSON.stringify(data.config), 'error');
-                    }
-                    throw new Error(data.error + (data.details ? ': ' + data.details : ''));
-                }
-                
-                if (!data.authUrl) {
-                    addDebugInfo('响应中缺少 authUrl', 'error');
-                    throw new Error('响应中缺少授权URL');
-                }
-                
-                addDebugInfo('准备跳转到: ' + data.authUrl, 'success');
-                
-                // 更新按钮状态
-                button.innerHTML = '<div class="loading"></div> 正在跳转到授权页面...';
-                
-                // 延迟跳转，让用户看到状态变化
-                setTimeout(() => {
-                    addDebugInfo('执行页面跳转', 'success');
-                    window.location.href = data.authUrl;
-                }, 1000);
-                
+                window.location.href = data.authUrl;
             } catch (error) {
-                addDebugInfo('OAuth 登录错误: ' + error.message, 'error');
-                console.error('OAuth登录失败:', error);
-                
-                showNotification('登录失败: ' + error.message, 'error');
-                
-                button.innerHTML = originalText;
+                showNotification('登录失败', 'error');
+                button.innerHTML = '<i class="fas fa-sign-in-alt"></i> 开始使用 OAuth 登录';
                 button.disabled = false;
             }
         }
@@ -2501,32 +2899,24 @@ function getHTML5() {
         // 验证登录状态
         async function verifyAuth() {
             try {
-                addDebugInfo('验证认证状态');
-                
                 const response = await fetch('/api/auth/verify', {
                     headers: {
                         'Authorization': 'Bearer ' + authToken
                     }
                 });
                 
-                addDebugInfo('认证验证响应状态: ' + response.status);
-                
                 const data = await response.json();
-                addDebugInfo('认证验证响应: ' + JSON.stringify(data));
                 
                 if (data.authenticated) {
                     currentUser = data.user;
-                    addDebugInfo('认证成功，用户: ' + currentUser.username, 'success');
                     showMainApp();
                     loadData();
                 } else {
-                    addDebugInfo('认证失败: ' + (data.error || '未知错误'), 'error');
                     localStorage.removeItem('authToken');
                     authToken = null;
                     showAuthSection();
                 }
             } catch (error) {
-                addDebugInfo('认证验证异常: ' + error.message, 'error');
                 console.error('Auth verification failed:', error);
                 showAuthSection();
             }
@@ -2534,13 +2924,11 @@ function getHTML5() {
 
         // 显示界面
         function showAuthSection() {
-            addDebugInfo('显示登录界面');
             document.getElementById('authSection').classList.remove('hidden');
             document.getElementById('mainApp').classList.add('hidden');
         }
 
         function showMainApp() {
-            addDebugInfo('显示主应用界面');
             document.getElementById('authSection').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
             
@@ -2551,30 +2939,24 @@ function getHTML5() {
                 
                 const avatar = document.getElementById('userAvatar');
                 if (currentUser.avatar) {
-                    avatar.innerHTML = '<img src="' + currentUser.avatar + '" alt="用户头像">';
+                    avatar.innerHTML = \`<img src="\${currentUser.avatar}" alt="用户头像">\`;
                 } else {
                     avatar.innerHTML = displayName.charAt(0).toUpperCase();
                 }
-                
-                addDebugInfo('用户信息已更新: ' + displayName, 'success');
             }
         }
 
         // 加载数据
         async function loadData() {
-            addDebugInfo('开始加载应用数据');
             await Promise.all([
                 loadPasswords(1),
                 loadCategories()
             ]);
-            addDebugInfo('应用数据加载完成');
         }
 
         // 加载密码列表 - 支持分页
         async function loadPasswords(page = 1, search = '', category = '') {
             try {
-                addDebugInfo('加载密码列表 - 页码: ' + page + ', 搜索: ' + search + ', 分类: ' + category);
-                
                 currentPage = page;
                 searchQuery = search;
                 categoryFilter = category;
@@ -2587,32 +2969,24 @@ function getHTML5() {
                 if (search) params.append('search', search);
                 if (category) params.append('category', category);
                 
-                const response = await fetch('/api/passwords?' + params, {
+                const response = await fetch(\`/api/passwords?\${params}\`, {
                     headers: {
                         'Authorization': 'Bearer ' + authToken
                     }
                 });
                 
-                if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
-                }
-                
                 const data = await response.json();
                 passwords = data.passwords || [];
-                
-                addDebugInfo('加载了 ' + passwords.length + ' 个密码条目');
                 
                 if (data.pagination) {
                     currentPage = data.pagination.page;
                     totalPages = data.pagination.totalPages;
                     updatePaginationInfo(data.pagination);
-                    addDebugInfo('分页信息: ' + JSON.stringify(data.pagination));
                 }
                 
                 renderPasswords();
                 renderPagination(data.pagination);
             } catch (error) {
-                addDebugInfo('加载密码失败: ' + error.message, 'error');
                 console.error('Failed to load passwords:', error);
                 showNotification('加载密码失败', 'error');
             }
@@ -2621,8 +2995,6 @@ function getHTML5() {
         // 加载分类
         async function loadCategories() {
             try {
-                addDebugInfo('加载分类列表');
-                
                 const response = await fetch('/api/categories', {
                     headers: {
                         'Authorization': 'Bearer ' + authToken
@@ -2631,10 +3003,7 @@ function getHTML5() {
                 
                 categories = await response.json();
                 updateCategorySelects();
-                
-                addDebugInfo('加载了 ' + categories.length + ' 个分类');
             } catch (error) {
-                addDebugInfo('加载分类失败: ' + error.message, 'error');
                 console.error('Failed to load categories:', error);
             }
         }
@@ -2644,64 +3013,82 @@ function getHTML5() {
             const categoryFilterSelect = document.getElementById('categoryFilter');
             const categorySelect = document.getElementById('category');
             
-            if (categoryFilterSelect) {
-                categoryFilterSelect.innerHTML = '<option value="">🏷️ 所有分类</option>';
-                categories.forEach(category => {
-                    categoryFilterSelect.innerHTML += '<option value="' + category + '">🏷️ ' + category + '</option>';
-                });
-            }
+            categoryFilterSelect.innerHTML = '<option value="">🏷️ 所有分类</option>';
+            categorySelect.innerHTML = '<option value="">选择分类</option>';
             
-            if (categorySelect) {
-                categorySelect.innerHTML = '<option value="">选择分类</option>';
-                categories.forEach(category => {
-                    categorySelect.innerHTML += '<option value="' + category + '">' + category + '</option>';
-                });
-            }
+            categories.forEach(category => {
+                categoryFilterSelect.innerHTML += \`<option value="\${category}">🏷️ \${category}</option>\`;
+                categorySelect.innerHTML += \`<option value="\${category}">\${category}</option>\`;
+            });
         }
 
-        // 渲染密码列表 - 列表形式
+        // 渲染密码列表
         function renderPasswords() {
-            const list = document.getElementById('passwordsList');
+            const grid = document.getElementById('passwordsGrid');
             
             if (passwords.length === 0) {
-                list.innerHTML = '<div class="empty-state"><div class="icon">🔑</div><h3>没有找到密码</h3><p>' + (searchQuery || categoryFilter ? '尝试调整搜索条件或清空筛选' : '点击"添加密码"标签页开始管理您的密码吧！') + '</p></div>';
+                grid.innerHTML = \`
+                    <div class="empty-state">
+                        <div class="icon">🔑</div>
+                        <h3>没有找到密码</h3>
+                        <p>\${searchQuery || categoryFilter ? '尝试调整搜索条件或清空筛选' : '点击"添加密码"标签页开始管理您的密码吧！'}</p>
+                    </div>
+                \`;
                 return;
             }
             
-            list.innerHTML = passwords.map(password => 
-                '<div class="password-item">' +
-                    '<div class="password-item-content">' +
-                        '<div class="password-item-icon">' +
-                            '<i class="fas fa-globe"></i>' +
-                        '</div>' +
-                        '<div class="password-item-info">' +
-                            '<div class="password-item-title">' + password.siteName + '</div>' +
-                            '<div class="password-item-username">' +
-                                '<i class="fas fa-user"></i>' +
-                                '<span>' + password.username + '</span>' +
-                            '</div>' +
-                            (password.url ? '<a href="' + password.url + '" target="_blank" rel="noopener noreferrer" class="password-item-url">' + password.url + '</a>' : '') +
-                        '</div>' +
-                    '</div>' +
-                    '<div class="password-item-meta">' +
-                        (password.category ? '<span class="category-badge">' + password.category + '</span>' : '') +
-                        '<div class="password-item-date">' +
-                            new Date(password.updatedAt).toLocaleDateString() +
-                        '</div>' +
-                    '</div>' +
-                    '<div class="password-item-actions">' +
-                        '<button class="btn btn-secondary btn-sm" onclick="copyPassword(\'' + password.id + '\')" type="button" title="复制密码">' +
-                            '<i class="fas fa-copy"></i>' +
-                        '</button>' +
-                        '<button class="btn btn-secondary btn-sm" onclick="editPassword(\'' + password.id + '\')" type="button" title="编辑">' +
-                            '<i class="fas fa-edit"></i>' +
-                        '</button>' +
-                        '<button class="btn btn-danger btn-sm" onclick="deletePassword(\'' + password.id + '\')" type="button" title="删除">' +
-                            '<i class="fas fa-trash"></i>' +
-                        '</button>' +
-                    '</div>' +
-                '</div>'
-            ).join('');
+            grid.innerHTML = passwords.map(password => \`
+                <article class="password-card">
+                    <header class="password-header">
+                        <div class="site-icon">
+                            <i class="fas fa-globe"></i>
+                        </div>
+                        <div class="password-meta">
+                            <h3>\${password.siteName}</h3>
+                            \${password.category ? \`<span class="category-badge">\${password.category}</span>\` : ''}
+                        </div>
+                    </header>
+                    
+                    <div class="password-field">
+                        <label>👤 用户名</label>
+                        <div class="value">\${password.username}</div>
+                    </div>
+                    
+                    <div class="password-field">
+                        <label>🔑 密码</label>
+                        <div class="value" id="pwd-\${password.id}">••••••••</div>
+                    </div>
+                    
+                    \${password.url ? \`
+                        <div class="password-field">
+                            <label>🔗 网址</label>
+                            <div class="value"><a href="\${password.url}" target="_blank" rel="noopener noreferrer">\${password.url}</a></div>
+                        </div>
+                    \` : ''}
+                    
+                    \${password.notes ? \`
+                        <div class="password-field">
+                            <label>📝 备注</label>
+                            <div class="value">\${password.notes}</div>
+                        </div>
+                    \` : ''}
+                    
+                    <footer class="password-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="togglePasswordDisplay('\${password.id}')" type="button">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyPassword('\${password.id}')" type="button">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="editPassword('\${password.id}')" type="button">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="deletePassword('\${password.id}')" type="button">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </footer>
+                </article>
+            \`).join('');
         }
 
         // 渲染分页
@@ -2712,7 +3099,7 @@ function getHTML5() {
                 container = document.createElement('div');
                 container.id = 'paginationContainer';
                 container.className = 'pagination-container';
-                document.getElementById('passwordsList').parentNode.appendChild(container);
+                document.getElementById('passwordsGrid').parentNode.appendChild(container);
             }
             
             if (!pagination || pagination.totalPages <= 1) {
@@ -2720,11 +3107,21 @@ function getHTML5() {
                 return;
             }
             
-            let paginationHTML = '<div class="pagination"><div class="pagination-info">显示第 ' + (((pagination.page - 1) * pagination.limit) + 1) + '-' + Math.min(pagination.page * pagination.limit, pagination.total) + ' 条，共 ' + pagination.total + ' 条</div><div class="pagination-controls">';
+            let paginationHTML = \`
+                <div class="pagination">
+                    <div class="pagination-info">
+                        显示第 \${((pagination.page - 1) * pagination.limit) + 1}-\${Math.min(pagination.page * pagination.limit, pagination.total)} 条，共 \${pagination.total} 条
+                    </div>
+                    <div class="pagination-controls">
+            \`;
             
             // 上一页按钮
             if (pagination.hasPrev) {
-                paginationHTML += '<button class="btn btn-secondary btn-sm" onclick="loadPasswords(' + (pagination.page - 1) + ', \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button"><i class="fas fa-chevron-left"></i> 上一页</button>';
+                paginationHTML += \`
+                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.page - 1}, '\${searchQuery}', '\${categoryFilter}')" type="button">
+                        <i class="fas fa-chevron-left"></i> 上一页
+                    </button>
+                \`;
             }
             
             // 页码按钮
@@ -2732,37 +3129,54 @@ function getHTML5() {
             const endPage = Math.min(pagination.totalPages, pagination.page + 2);
             
             if (startPage > 1) {
-                paginationHTML += '<button class="btn btn-secondary btn-sm" onclick="loadPasswords(1, \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button">1</button>';
+                paginationHTML += \`
+                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(1, '\${searchQuery}', '\${categoryFilter}')" type="button">1</button>
+                \`;
                 if (startPage > 2) {
-                    paginationHTML += '<span class="pagination-ellipsis">...</span>';
+                    paginationHTML += \`<span class="pagination-ellipsis">...</span>\`;
                 }
             }
             
             for (let i = startPage; i <= endPage; i++) {
                 const isActive = i === pagination.page;
-                paginationHTML += '<button class="btn ' + (isActive ? 'btn-primary' : 'btn-secondary') + ' btn-sm" onclick="loadPasswords(' + i + ', \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button"' + (isActive ? ' disabled' : '') + '>' + i + '</button>';
+                paginationHTML += \`
+                    <button class="btn \${isActive ? 'btn-primary' : 'btn-secondary'} btn-sm" 
+                            onclick="loadPasswords(\${i}, '\${searchQuery}', '\${categoryFilter}')" 
+                            type="button" \${isActive ? 'disabled' : ''}>
+                        \${i}
+                    </button>
+                \`;
             }
             
             if (endPage < pagination.totalPages) {
                 if (endPage < pagination.totalPages - 1) {
-                    paginationHTML += '<span class="pagination-ellipsis">...</span>';
+                    paginationHTML += \`<span class="pagination-ellipsis">...</span>\`;
                 }
-                paginationHTML += '<button class="btn btn-secondary btn-sm" onclick="loadPasswords(' + pagination.totalPages + ', \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button">' + pagination.totalPages + '</button>';
+                paginationHTML += \`
+                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.totalPages}, '\${searchQuery}', '\${categoryFilter}')" type="button">\${pagination.totalPages}</button>
+                \`;
             }
             
             // 下一页按钮
             if (pagination.hasNext) {
-                paginationHTML += '<button class="btn btn-secondary btn-sm" onclick="loadPasswords(' + (pagination.page + 1) + ', \'' + searchQuery + '\', \'' + categoryFilter + '\')" type="button">下一页 <i class="fas fa-chevron-right"></i></button>';
+                paginationHTML += \`
+                    <button class="btn btn-secondary btn-sm" onclick="loadPasswords(\${pagination.page + 1}, '\${searchQuery}', '\${categoryFilter}')" type="button">
+                        下一页 <i class="fas fa-chevron-right"></i>
+                    </button>
+                \`;
             }
             
-            paginationHTML += '</div></div>';
+            paginationHTML += \`
+                    </div>
+                </div>
+            \`;
             
             container.innerHTML = paginationHTML;
         }
 
         // 更新分页信息
         function updatePaginationInfo(pagination) {
-            addDebugInfo('分页信息更新: 第' + pagination.page + '页，共' + pagination.totalPages + '页');
+            console.log('分页信息:', pagination);
         }
 
         // 过滤密码 - 支持分页
@@ -2770,18 +3184,39 @@ function getHTML5() {
             const searchTerm = document.getElementById('searchInput').value;
             const categoryFilter = document.getElementById('categoryFilter').value;
             
-            addDebugInfo('过滤密码 - 搜索: ' + searchTerm + ', 分类: ' + categoryFilter);
-            
             // 重置到第一页并重新加载
             loadPasswords(1, searchTerm, categoryFilter);
+        }
+
+        // 显示/隐藏密码
+        async function togglePasswordDisplay(passwordId) {
+            const element = document.getElementById(\`pwd-\${passwordId}\`);
+            const button = event.target.closest('button');
+            
+            if (element.textContent === '••••••••') {
+                try {
+                    const response = await fetch(\`/api/passwords/\${passwordId}/reveal\`, {
+                        headers: {
+                            'Authorization': 'Bearer ' + authToken
+                        }
+                    });
+                    
+                    const data = await response.json();
+                    element.textContent = data.password;
+                    button.innerHTML = '<i class="fas fa-eye-slash"></i>';
+                } catch (error) {
+                    showNotification('获取密码失败', 'error');
+                }
+            } else {
+                element.textContent = '••••••••';
+                button.innerHTML = '<i class="fas fa-eye"></i>';
+            }
         }
 
         // 复制密码
         async function copyPassword(passwordId) {
             try {
-                addDebugInfo('复制密码: ' + passwordId);
-                
-                const response = await fetch('/api/passwords/' + passwordId + '/reveal', {
+                const response = await fetch(\`/api/passwords/\${passwordId}/reveal\`, {
                     headers: {
                         'Authorization': 'Bearer ' + authToken
                     }
@@ -2791,7 +3226,6 @@ function getHTML5() {
                 await navigator.clipboard.writeText(data.password);
                 showNotification('密码已复制到剪贴板 📋');
             } catch (error) {
-                addDebugInfo('复制密码失败: ' + error.message, 'error');
                 showNotification('复制失败', 'error');
             }
         }
@@ -2801,8 +3235,6 @@ function getHTML5() {
             const password = passwords.find(p => p.id === passwordId);
             if (!password) return;
             
-            addDebugInfo('编辑密码: ' + passwordId);
-            
             editingPasswordId = passwordId;
             
             document.getElementById('siteName').value = password.siteName;
@@ -2811,6 +3243,9 @@ function getHTML5() {
             document.getElementById('category').value = password.category || '';
             document.getElementById('url').value = password.url || '';
             document.getElementById('notes').value = password.notes || '';
+            
+            // 隐藏重复警告
+            hideDuplicateWarning();
             
             // 切换到添加密码标签页
             switchTab('add-password');
@@ -2825,9 +3260,7 @@ function getHTML5() {
             if (!confirm('🗑️ 确定要删除这个密码吗？此操作无法撤销。')) return;
             
             try {
-                addDebugInfo('删除密码: ' + passwordId);
-                
-                const response = await fetch('/api/passwords/' + passwordId, {
+                const response = await fetch(\`/api/passwords/\${passwordId}\`, {
                     method: 'DELETE',
                     headers: {
                         'Authorization': 'Bearer ' + authToken
@@ -2842,12 +3275,11 @@ function getHTML5() {
                     showNotification('删除失败', 'error');
                 }
             } catch (error) {
-                addDebugInfo('删除密码失败: ' + error.message, 'error');
                 showNotification('删除失败', 'error');
             }
         }
 
-        // 处理密码表单提交
+        // 处理密码表单提交 - 改进版本，处理重复检查
         async function handlePasswordSubmit(e) {
             e.preventDefault();
             
@@ -2865,13 +3297,9 @@ function getHTML5() {
                 formData.id = editingPasswordId;
             }
             
-            addDebugInfo('提交密码表单: ' + JSON.stringify(formData));
-            
             try {
-                const url = editingPasswordId ? '/api/passwords/' + editingPasswordId : '/api/passwords';
+                const url = editingPasswordId ? \`/api/passwords/\${editingPasswordId}\` : '/api/passwords';
                 const method = editingPasswordId ? 'PUT' : 'POST';
-                
-                addDebugInfo('发送密码保存请求: ' + method + ' ' + url);
                 
                 const response = await fetch(url, {
                     method: method,
@@ -2882,19 +3310,19 @@ function getHTML5() {
                     body: JSON.stringify(formData)
                 });
                 
-                addDebugInfo('密码保存响应状态: ' + response.status);
-                
                 if (response.ok) {
                     showNotification(editingPasswordId ? '密码已更新 ✅' : '密码已添加 ✅');
                     clearForm();
                     loadPasswords(currentPage, searchQuery, categoryFilter);
+                } else if (response.status === 409) {
+                    // 处理重复冲突
+                    const result = await response.json();
+                    showDuplicateWarning(result.existing);
+                    showNotification(result.message, 'warning');
                 } else {
-                    const errorData = await response.json();
-                    addDebugInfo('密码保存失败: ' + JSON.stringify(errorData), 'error');
-                    showNotification(errorData.message || '保存失败', 'error');
+                    showNotification('保存失败', 'error');
                 }
             } catch (error) {
-                addDebugInfo('密码表单提交异常: ' + error.message, 'error');
                 showNotification('保存失败', 'error');
             }
         }
@@ -2904,6 +3332,7 @@ function getHTML5() {
             document.getElementById('passwordForm').reset();
             document.getElementById('lengthValue').textContent = '16';
             editingPasswordId = null;
+            hideDuplicateWarning();
             
             // 恢复按钮文本
             const submitBtn = document.querySelector('#passwordForm button[type="submit"]');
@@ -2921,8 +3350,6 @@ function getHTML5() {
             };
             
             try {
-                addDebugInfo('生成密码，选项: ' + JSON.stringify(options));
-                
                 const response = await fetch('/api/generate-password', {
                     method: 'POST',
                     headers: {
@@ -2936,7 +3363,6 @@ function getHTML5() {
                 document.getElementById('password').type = 'text';
                 showNotification('强密码已生成 🎲');
             } catch (error) {
-                addDebugInfo('生成密码失败: ' + error.message, 'error');
                 showNotification('生成密码失败', 'error');
             }
         }
@@ -2956,11 +3382,343 @@ function getHTML5() {
             }
         }
 
+        // WebDAV测试连接
+        async function testWebDAVConnection() {
+            const config = {
+                webdavUrl: document.getElementById('webdavUrl').value,
+                username: document.getElementById('webdavUsername').value,
+                password: document.getElementById('webdavPassword').value
+            };
+            
+            if (!config.webdavUrl || !config.username || !config.password) {
+                showNotification('请填写完整的WebDAV配置', 'error');
+                return;
+            }
+            
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<div class="loading"></div> 测试中...';
+            button.disabled = true;
+            
+            try {
+                const response = await fetch('/api/webdav/test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify(config)
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification('✅ WebDAV连接成功！', 'success');
+                } else {
+                    showNotification(result.error || 'WebDAV连接失败', 'error');
+                }
+            } catch (error) {
+                showNotification('WebDAV连接测试失败', 'error');
+            } finally {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            }
+        }
+
+        // WebDAV配置管理
+        async function saveWebDAVConfig() {
+            const config = {
+                webdavUrl: document.getElementById('webdavUrl').value,
+                username: document.getElementById('webdavUsername').value,
+                password: document.getElementById('webdavPassword').value
+            };
+            
+            if (!config.webdavUrl || !config.username || !config.password) {
+                showNotification('请填写完整的WebDAV配置', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/webdav/config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify(config)
+                });
+                
+                if (response.ok) {
+                    showNotification('WebDAV配置已保存 ✅');
+                } else {
+                    showNotification('保存配置失败', 'error');
+                }
+            } catch (error) {
+                showNotification('保存配置失败', 'error');
+            }
+        }
+
+        async function loadWebDAVConfig() {
+            try {
+                const response = await fetch('/api/webdav/config', {
+                    headers: {
+                        'Authorization': 'Bearer ' + authToken
+                    }
+                });
+                
+                if (response.ok) {
+                    const config = await response.json();
+                    if (config.webdavUrl) {
+                        document.getElementById('webdavUrl').value = config.webdavUrl;
+                        document.getElementById('webdavUsername').value = config.username;
+                        document.getElementById('webdavPassword').value = config.password;
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load WebDAV config:', error);
+            }
+        }
+
+        async function loadWebDAVFiles() {
+            try {
+                const response = await fetch('/api/webdav/list', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + authToken
+                    }
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    renderBackupFiles(result.files);
+                } else {
+                    showNotification(result.error || '获取文件列表失败', 'error');
+                }
+            } catch (error) {
+                showNotification('获取文件列表失败', 'error');
+            }
+        }
+
+        async function createWebDAVBackup() {
+            const backupPassword = document.getElementById('backupPassword').value;
+            if (!backupPassword) {
+                showNotification('请设置备份密码', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/webdav/backup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ backupPassword })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification(\`备份成功：\${result.filename} ☁️\`);
+                    document.getElementById('backupPassword').value = '';
+                    loadWebDAVFiles();
+                } else {
+                    showNotification(result.error || '备份失败', 'error');
+                }
+            } catch (error) {
+                showNotification('备份失败', 'error');
+            }
+        }
+
+        async function restoreWebDAVBackup(filename) {
+            const restorePassword = prompt(\`请输入备份文件 \${filename} 的密码：\`);
+            if (!restorePassword) return;
+            
+            if (!confirm(\`确定要从 \${filename} 恢复数据吗？\`)) return;
+            
+            try {
+                const response = await fetch('/api/webdav/restore', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({
+                        filename: filename,
+                        restorePassword: restorePassword
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification(result.message + ' 🔄');
+                    loadPasswords(currentPage, searchQuery, categoryFilter);
+                } else {
+                    showNotification(result.error || '恢复失败', 'error');
+                }
+            } catch (error) {
+                showNotification('恢复失败', 'error');
+            }
+        }
+
+        async function deleteWebDAVBackup(filename) {
+            if (!confirm(\`确定要删除 \${filename} 吗？\`)) return;
+            
+            try {
+                const response = await fetch('/api/webdav/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ filename: filename })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification('删除成功 🗑️');
+                    loadWebDAVFiles();
+                } else {
+                    showNotification(result.error || '删除失败', 'error');
+                }
+            } catch (error) {
+                showNotification('删除失败', 'error');
+            }
+        }
+
+        function renderBackupFiles(files) {
+            const container = document.getElementById('backupFilesList');
+            
+            if (files.length === 0) {
+                container.innerHTML = '<p class="text-center" style="color: #6b7280;">没有找到备份文件</p>';
+                return;
+            }
+            
+            container.innerHTML = files.map(file => \`
+                <div class="backup-file">
+                    <span>📁 \${file}</span>
+                    <div class="backup-file-actions">
+                        <button class="btn btn-success btn-sm" onclick="restoreWebDAVBackup('\${file}')" type="button">
+                            <i class="fas fa-download"></i> 恢复
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteWebDAVBackup('\${file}')" type="button">
+                            <i class="fas fa-trash"></i> 删除
+                        </button>
+                    </div>
+                </div>
+            \`).join('');
+        }
+
+        // 导出数据
+        async function exportData() {
+            const exportPassword = document.getElementById('exportPassword').value;
+            if (!exportPassword) {
+                showNotification('请设置导出密码', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/export-encrypted', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ exportPassword })
+                });
+                
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = \`passwords-encrypted-export-\${new Date().toISOString().split('T')[0]}.json\`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(downloadUrl);
+                
+                showNotification('加密数据导出成功 📤');
+                document.getElementById('exportPassword').value = '';
+            } catch (error) {
+                showNotification('导出失败', 'error');
+            }
+        }
+
+        // 处理文件选择
+        function handleFileSelect() {
+            const fileInput = document.getElementById('importFile');
+            selectedFile = fileInput.files[0];
+            
+            if (selectedFile) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (data.encrypted) {
+                            document.getElementById('encryptedImportForm').classList.remove('hidden');
+                        } else {
+                            showNotification('只支持加密文件导入', 'error');
+                            fileInput.value = '';
+                            selectedFile = null;
+                        }
+                    } catch (error) {
+                        showNotification('文件格式错误', 'error');
+                    }
+                };
+                reader.readAsText(selectedFile);
+            }
+        }
+
+        // 导入数据
+        async function importData() {
+            if (!selectedFile) {
+                showNotification('请选择文件', 'error');
+                return;
+            }
+            
+            const importPassword = document.getElementById('importPassword').value;
+            if (!importPassword) {
+                showNotification('请输入导入密码', 'error');
+                return;
+            }
+            
+            try {
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    const fileContent = e.target.result;
+                    const data = JSON.parse(fileContent);
+                    
+                    const response = await fetch('/api/import-encrypted', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + authToken
+                        },
+                        body: JSON.stringify({
+                            encryptedData: data.data,
+                            importPassword: importPassword
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    if (response.ok) {
+                        showNotification(\`导入完成：成功 \${result.imported} 条，失败 \${result.errors} 条 📥\`);
+                        document.getElementById('importFile').value = '';
+                        document.getElementById('importPassword').value = '';
+                        document.getElementById('encryptedImportForm').classList.add('hidden');
+                        selectedFile = null;
+                        loadPasswords(currentPage, searchQuery, categoryFilter);
+                    } else {
+                        showNotification(result.error || '导入失败', 'error');
+                    }
+                };
+                reader.readAsText(selectedFile);
+            } catch (error) {
+                showNotification('导入失败：文件格式错误', 'error');
+            }
+        }
+
         // 登出
         async function logout() {
             try {
-                addDebugInfo('执行登出操作');
-                
                 await fetch('/api/auth/logout', {
                     method: 'POST',
                     headers: {
@@ -2968,7 +3726,6 @@ function getHTML5() {
                     }
                 });
             } catch (error) {
-                addDebugInfo('登出请求失败: ' + error.message, 'error');
                 console.error('Logout error:', error);
             }
             
@@ -2976,13 +3733,12 @@ function getHTML5() {
             authToken = null;
             currentUser = null;
             showAuthSection();
-            addDebugInfo('登出完成', 'success');
         }
 
         // 显示通知
         function showNotification(message, type = 'success') {
             const notification = document.createElement('div');
-            notification.className = 'notification ' + type;
+            notification.className = \`notification \${type}\`;
             
             const icons = {
                 success: 'check-circle',
@@ -2991,7 +3747,10 @@ function getHTML5() {
                 info: 'info-circle'
             };
             
-            notification.innerHTML = '<i class="fas fa-' + (icons[type] || icons.success) + '"></i>' + message;
+            notification.innerHTML = \`
+                <i class="fas fa-\${icons[type] || icons.success}"></i>
+                \${message}
+            \`;
             
             document.body.appendChild(notification);
             
@@ -3012,3 +3771,4 @@ function getHTML5() {
 </body>
 </html>`;
 }
+        
