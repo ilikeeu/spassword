@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         智能密码管理助手
-// @namespace    https://修改为你的密码管理系统地址/
-// @version      1.6.2
-// @description  自动检测和填充密码，支持多账户切换和密码变更检测，防止注册时重复保存。
+// @name         智能密码管理助手 Pro - 修正版
+// @namespace    https://修改为你的密码管理中心地址/
+// @version      2.1.1
+// @description  自动检测和填充密码，支持多账户切换、密码变更检测和历史记录管理。修正相同账号不同密码的处理逻辑，不会保存为新账号，只提示是否更新现有账号。
 // @author       Password Manager Pro
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -20,11 +20,12 @@
 
     // 配置
     const CONFIG = {
-        API_BASE: 'https://修改为你的密码管理系统地址',
+        API_BASE: 'https://修改为你的密码管理中心地址',
         STORAGE_KEY: 'password_manager_token',
         AUTO_SAVE: true,
         AUTO_FILL: true,
-        SHOW_NOTIFICATIONS: true
+        SHOW_NOTIFICATIONS: true,
+        DETECT_PASSWORD_CHANGE: true
     };
 
     // 全局变量
@@ -35,8 +36,9 @@
     let passwordManagerUI = null;
     let isPasswordManagerSite = false;
     let cachedMatches = [];
+    let lastSubmittedData = null;
 
-    // ========== 首先定义所有全局函数 ==========
+    // ========== 全局函数定义 ==========
 
     // 全局填充函数
     function fillPasswordFromElement(buttonElement) {
@@ -70,16 +72,19 @@
     async function updateExistingPassword(passwordId, newPassword) {
         console.log('🔄 updateExistingPassword 被调用', passwordId);
         try {
-            const response = await makeRequest(`/api/passwords/${passwordId}`, {
-                method: 'PUT',
+            const response = await makeRequest(`/api/update-existing-password`, {
+                method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + authToken
                 },
-                body: JSON.stringify({ password: newPassword })
+                body: JSON.stringify({
+                    passwordId: passwordId,
+                    newPassword: newPassword
+                })
             });
 
-            showNotification('✅ 密码已更新', 'success');
+            showNotification('✅ 密码已更新，历史记录已保存', 'success');
             setTimeout(checkPasswordMatches, 1000);
 
             const prompt = document.querySelector('.pm-password-change-prompt');
@@ -90,6 +95,149 @@
             console.error('更新密码失败:', error);
             showNotification('❌ 更新密码失败', 'error');
         }
+    }
+
+    // 查看密码历史
+    async function viewPasswordHistory(passwordId) {
+        try {
+            const response = await makeRequest(`/api/passwords/${passwordId}/history`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + authToken
+                }
+            });
+
+            showPasswordHistoryModal(response.history, passwordId);
+        } catch (error) {
+            console.error('获取密码历史失败:', error);
+            showNotification('❌ 获取密码历史失败', 'error');
+        }
+    }
+
+    // [修正] 显示密码历史模态框
+    // 使用事件委托（Event Delegation）代替内联 onclick，以兼容有严格内容安全策略（CSP）的网站。
+    function showPasswordHistoryModal(history, passwordId) {
+        const modal = document.createElement('div');
+        modal.className = 'pm-password-history-modal';
+        modal.innerHTML = `
+            <div class="pm-modal-overlay">
+                <div class="pm-modal-content">
+                    <div class="pm-modal-header">
+                        <h3>📜 密码历史记录</h3>
+                        <button type="button" class="pm-close-btn">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="pm-modal-body">
+                        ${history.length === 0 ?
+                          '<p class="pm-text-center">暂无历史记录</p>' :
+                          history.map((entry, index) => `
+                            <div class="pm-history-item">
+                                <div class="pm-history-header">
+                                    <span class="pm-history-date">${new Date(entry.changedAt).toLocaleString()}</span>
+                                    <button type="button" class="pm-btn pm-btn-success pm-btn-sm pm-btn-restore" data-password-id="${entry.passwordId || passwordId}" data-history-id="${entry.id}">
+                                        🔄 恢复此密码
+                                    </button>
+                                </div>
+                                <div class="pm-history-password">
+                                    <label>密码：</label>
+                                    <span class="pm-password-value" id="historyPwd${index}">••••••••</span>
+                                    <button type="button" class="pm-btn pm-btn-sm pm-btn-secondary pm-btn-toggle-history-pwd" data-element-id="historyPwd${index}" data-password="${escapeHtml(entry.oldPassword)}">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                            </div>
+                          `).join('')
+                        }
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // -- 本地函数定义 --
+
+        const closeModal = () => {
+            modal.remove();
+        };
+
+        const toggleHistoryPassword = (button) => {
+            const elementId = button.dataset.elementId;
+            const password = button.dataset.password;
+            const element = document.getElementById(elementId);
+            const icon = button.querySelector('i');
+
+            if (element && icon) {
+                if (element.textContent === '••••••••') {
+                    element.textContent = password;
+                    icon.className = 'fas fa-eye-slash';
+                } else {
+                    element.textContent = '••••••••';
+                    icon.className = 'fas fa-eye';
+                }
+            }
+        };
+
+        const restorePasswordHistory = async (button) => {
+            const passwordIdToRestore = button.dataset.passwordId;
+            const historyIdToRestore = button.dataset.historyId;
+
+            if (!confirm('确定要恢复到这个历史密码吗？当前密码将被保存到历史记录中。')) {
+                return;
+            }
+
+            try {
+                await makeRequest('/api/passwords/restore', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ passwordId: passwordIdToRestore, historyId: historyIdToRestore })
+                });
+
+                showNotification('✅ 密码已恢复到历史版本', 'success');
+                closeModal();
+                setTimeout(checkPasswordMatches, 1000);
+            } catch (error) {
+                showNotification('❌ 恢复密码失败', 'error');
+                console.error('恢复密码失败:', error);
+            }
+        };
+
+        // -- 事件委托监听 --
+
+        modal.addEventListener('click', (e) => {
+            const target = e.target;
+            const content = target.closest('.pm-modal-content');
+
+            // 检查是否点击了遮罩层（但在内容区域之外）
+            if (target.matches('.pm-modal-overlay') && !content) {
+                closeModal();
+                return;
+            }
+
+            // 检查是否点击了关闭按钮
+            if (target.closest('.pm-close-btn')) {
+                closeModal();
+                return;
+            }
+
+            // 检查是否点击了切换密码可见性按钮
+            const toggleButton = target.closest('.pm-btn-toggle-history-pwd');
+            if (toggleButton) {
+                toggleHistoryPassword(toggleButton);
+                return;
+            }
+
+            // 检查是否点击了恢复密码按钮
+            const restoreButton = target.closest('.pm-btn-restore');
+            if (restoreButton) {
+                restorePasswordHistory(restoreButton);
+                return;
+            }
+        });
     }
 
     // 主要填充函数
@@ -219,7 +367,7 @@
         }
     }
 
-    // 扩展对象 (为了兼容可能存在的旧接口或调试目的)
+    // 扩展对象
     window.pmExtension = {
         fillPassword: fillPassword,
 
@@ -297,8 +445,8 @@
     // 检查是否是密码管理器网站
     function checkPasswordManagerSite() {
         isPasswordManagerSite = window.location.hostname.includes('spassword.pages.dev') ||
-                                  window.location.hostname.includes('localhost') ||
-                                  window.location.hostname.includes('127.0.0.1');
+                                 window.location.hostname.includes('localhost') ||
+                                 window.location.hostname.includes('127.0.0.1');
         return isPasswordManagerSite;
     }
 
@@ -795,6 +943,26 @@
             box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
         }
 
+        .pm-btn-history {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+            border: none;
+            padding: 10px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .pm-btn-history:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
         .pm-quick-fill {
             background: linear-gradient(135deg, #10b981, #059669);
             color: white;
@@ -854,6 +1022,19 @@
             font-size: 12px;
             font-weight: 600;
             width: 100%;
+        }
+
+        .pm-btn-sm {
+            padding: 6px 12px;
+            font-size: 11px;
+        }
+
+        .pm-btn-secondary {
+            background: #6b7280;
+        }
+
+        .pm-btn-success {
+            background: linear-gradient(135deg, #10b981, #059669);
         }
 
         .pm-token-display {
@@ -988,13 +1169,151 @@
             font-weight: 600;
             flex: 1;
         }
+
+        .pm-btn-history-view {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            flex: 1;
+        }
+
+        /* 密码历史模态框样式 */
+        .pm-password-history-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10002;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .pm-modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .pm-modal-content {
+            position: relative;
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .pm-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .pm-modal-header h3 {
+            margin: 0;
+            color: #1f2937;
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .pm-close-btn {
+            background: none;
+            border: none;
+            font-size: 20px;
+            color: #6b7280;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        }
+
+        .pm-close-btn:hover {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .pm-modal-body {
+            margin: 0;
+        }
+
+        .pm-history-item {
+            background: #f8fafc;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        .pm-history-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .pm-history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .pm-history-date {
+            font-size: 14px;
+            color: #6b7280;
+            font-weight: 600;
+        }
+
+        .pm-history-password {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .pm-history-password label {
+            font-weight: 600;
+            font-size: 14px;
+            color: #374151;
+            min-width: 60px;
+        }
+
+        .pm-password-value {
+            flex: 1;
+            padding: 8px 12px;
+            background: white;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+
+        .pm-text-center {
+            text-align: center;
+            color: #6b7280;
+            padding: 40px 20px;
+            font-style: italic;
+        }
     `);
 
     // ========== 主要功能函数 ==========
 
     // 初始化
     async function init() {
-        console.log('🔐 密码管理助手已启动');
+        console.log('🔐 密码管理助手 Pro 已启动');
 
         checkPasswordManagerSite();
 
@@ -1048,7 +1367,7 @@
                 floatingBtn.appendChild(countBadge);
             }
         } else {
-            floatingBtn.title = '密码管理助手';
+            floatingBtn.title = '密码管理助手 Pro';
         }
     }
 
@@ -1085,7 +1404,7 @@
         const btn = document.createElement('button');
         btn.className = 'pm-floating-btn';
         btn.innerHTML = '🔐';
-        btn.title = '密码管理助手';
+        btn.title = '密码管理助手 Pro';
         btn.onclick = togglePasswordManager;
         document.body.appendChild(btn);
     }
@@ -1111,7 +1430,7 @@
                 <div class="pm-popup-header">
                     <div class="pm-popup-title">
                         <span>🔐</span>
-                        <span>密码管理助手</span>
+                        <span>密码管理助手 Pro</span>
                     </div>
                 </div>
                 <div class="pm-popup-content">
@@ -1128,7 +1447,7 @@
                     <div class="pm-popup-header">
                         <div class="pm-popup-title">
                             <span>🔐</span>
-                            <span>密码管理助手</span>
+                            <span>密码管理助手 Pro</span>
                         </div>
                     </div>
                     <div class="pm-popup-content">
@@ -1153,7 +1472,7 @@
                     <div class="pm-popup-header">
                         <div class="pm-popup-title">
                             <span>🔐</span>
-                            <span>密码管理助手</span>
+                            <span>密码管理助手 Pro</span>
                         </div>
                         ${matches.length > 0 ? renderMatchStats(matches) : ''}
                     </div>
@@ -1172,6 +1491,7 @@
         popup.addEventListener('click', (e) => {
             const target = e.target;
             const fillButton = target.closest('.pm-btn-fill');
+            const historyButton = target.closest('.pm-btn-history');
             const quickFillButton = target.closest('.pm-quick-fill');
             const loginBtn = target.closest('.pm-login-btn');
             const tokenDisplay = target.closest('.pm-token-display');
@@ -1180,6 +1500,12 @@
             if (fillButton) {
                 e.preventDefault();
                 fillPasswordFromElement(fillButton);
+            } else if (historyButton) {
+                e.preventDefault();
+                const passwordId = historyButton.getAttribute('data-password-id');
+                if (passwordId) {
+                    viewPasswordHistory(passwordId);
+                }
             } else if (quickFillButton) {
                 e.preventDefault();
                 const matchData = JSON.parse(quickFillButton.dataset.match);
@@ -1357,6 +1683,9 @@
                         <button class="pm-btn-fill">
                             ⚡ 立即填充
                         </button>
+                        <button class="pm-btn-history" data-password-id="${match.id}" title="查看密码历史">
+                            📜
+                        </button>
                     </div>
 
                     <div class="pm-password-item-meta">
@@ -1426,13 +1755,13 @@
         }
     }
 
-    // 处理表单提交
+    // 处理表单提交 - 修正版本，支持密码变更检测
     async function handleFormSubmit(e) {
         if (!isAuthenticated || isPasswordManagerSite) return;
 
         const form = e.target;
 
-        // 【修复】启发式检测：如果表单中有多个可见的密码字段，则判断为注册或修改密码表单，不执行自动保存。
+        // 启发式检测：如果表单中有多个可见的密码字段，则判断为注册或修改密码表单，不执行自动保存
         const passwordFields = form.querySelectorAll('input[type="password"]');
         const visiblePasswordFields = Array.from(passwordFields).filter(field => isElementVisible(field));
 
@@ -1445,6 +1774,15 @@
         const passwordField = visiblePasswordFields[0];
 
         if (usernameField && passwordField && usernameField.value && passwordField.value) {
+            const submitData = {
+                url: window.location.href,
+                username: usernameField.value,
+                password: passwordField.value
+            };
+
+            // 记录提交数据，用于后续密码变更检测
+            lastSubmittedData = submitData;
+
             setTimeout(async () => {
                 try {
                     const response = await makeRequest('/api/detect-login', {
@@ -1453,17 +1791,14 @@
                             'Content-Type': 'application/json',
                             'Authorization': 'Bearer ' + authToken
                         },
-                        body: JSON.stringify({
-                            url: window.location.href,
-                            username: usernameField.value,
-                            password: passwordField.value
-                        })
+                        body: JSON.stringify(submitData)
                     });
 
                     if (response.exists && response.identical) {
                         showNotification('🔐 账户已存在且密码相同', 'info');
-                    } else if (response.exists && response.passwordChanged) {
-                        showPasswordChangePrompt(response.existing, passwordField.value);
+                    } else if (response.exists && response.passwordChanged && response.shouldUpdate) {
+                        // 修正：相同账号不同密码，显示更新提示而不是保存为新账号
+                        showPasswordChangePrompt(response.existing, submitData.password);
                     } else if (response.saved) {
                         showNotification('✅ 新账户已自动保存', 'success');
                         setTimeout(checkPasswordMatches, 1000);
@@ -1475,7 +1810,7 @@
         }
     }
 
-    // 显示密码变更提示
+    // 显示密码变更提示 - 修正版本，支持查看历史记录
     function showPasswordChangePrompt(existingPassword, newPassword) {
         const existingPrompt = document.querySelector('.pm-password-change-prompt');
         if (existingPrompt) {
@@ -1485,15 +1820,17 @@
         const prompt = document.createElement('div');
         prompt.className = 'pm-password-change-prompt';
 
-        // 移除 innerHTML 中的 onclick 属性
         prompt.innerHTML = `
-            <h4>🔄 检测到密码变更</h4>
+            <h4>🔄 检测到相同账号的密码变更</h4>
             <p>网站：${escapeHtml(existingPassword.siteName)}<br>
                用户：${escapeHtml(existingPassword.username)}</p>
-            <p style="font-size: 11px;">检测到该账户的密码已变更，是否更新保存的密码？</p>
+            <p style="font-size: 11px;"><strong>注意：</strong>相同账号不会被保存为新账户，只能选择更新现有账户的密码。</p>
             <div class="pm-password-change-actions">
                 <button class="pm-btn-update">
                     ✅ 更新密码
+                </button>
+                <button class="pm-btn-history-view">
+                    📜 查看历史
                 </button>
                 <button class="pm-btn-ignore">
                     ❌ 忽略
@@ -1507,6 +1844,9 @@
         prompt.addEventListener('click', (e) => {
             if (e.target.closest('.pm-btn-update')) {
                 updateExistingPassword(existingPassword.id, newPassword);
+            } else if (e.target.closest('.pm-btn-history-view')) {
+                viewPasswordHistory(existingPassword.id);
+                prompt.remove();
             } else if (e.target.closest('.pm-btn-ignore')) {
                 prompt.remove();
             }
@@ -1516,7 +1856,7 @@
             if (document.body.contains(prompt)) {
                 prompt.remove();
             }
-        }, 10000);
+        }, 15000); // 延长显示时间到15秒
     }
 
     // 监听表单变化
@@ -1620,13 +1960,20 @@
             fillPassword(testData);
         });
 
+        GM_registerMenuCommand('📜 密码变更检测开关', () => {
+            CONFIG.DETECT_PASSWORD_CHANGE = !CONFIG.DETECT_PASSWORD_CHANGE;
+            showNotification(`密码变更检测已${CONFIG.DETECT_PASSWORD_CHANGE ? '开启' : '关闭'}`, 'info');
+        });
+
         GM_registerMenuCommand('🔍 调试信息', () => {
-            console.log('=== 密码管理助手调试信息 ===');
+            console.log('=== 密码管理助手 Pro 调试信息 ===');
             console.log('认证状态:', isAuthenticated);
             console.log('当前用户:', currentUser);
             console.log('检测到的表单:', detectedForms);
             console.log('缓存的匹配:', cachedMatches);
             console.log('页面URL:', window.location.href);
+            console.log('最后提交数据:', lastSubmittedData);
+            console.log('配置信息:', CONFIG);
             console.log('pmExtension 对象:', window.pmExtension);
 
             const allInputs = document.querySelectorAll('input');
