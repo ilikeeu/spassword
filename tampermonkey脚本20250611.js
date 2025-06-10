@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         智能密码管理助手 Pro - 修正版
 // @namespace    https://pass.pages.dev/
-// @version      2.1.3
-// @description  自动检测和填充密码，支持多账户切换、密码变更检测和历史记录管理。修正相同账号不同密码的处理逻辑，不会保存为新账号，只提示是否更新现有账号。新增删除历史密码功能。
+// @version      2.1.7
+// @description  自动检测和填充密码，支持多账户切换、密码变更检测和历史记录管理。修正相同账号不同密码的处理逻辑，不会保存为新账号，只提示是否更新现有账号。新增删除历史密码功能。可拖拽浮动按钮，图片呼吸效果。修复图标显示问题。只在检测到登录框时显示图标。
 // @author       Password Manager Pro
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -12,7 +12,7 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
 // @run-at       document-end
-// @icon         data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔐</text></svg>
+// @icon         data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACdUlEQVR4nF2TPWtcVxCGnzn3Siuhj0iOVMgLLiT8A+yg1HaXbZIqaVIIUijgLsHg36DG6QRhsQuXSWEMwYka24XTCNJZARGIYuGNEkVeRbY+9u45Z14X98oYD0wzzDsf58xjAAIzEMB/sAysDuHaANoJcOhleHIG3WXYfFdjAgP4DcpFWANuGLSOgQEQ62QCcArVANafwa2vIQkwQQGE/+HBjFmnV4tyMgtJsigRQ1ACT1IxLbEPv3wAn/4JHgxyH9ZmoPO3NMySXCqSu2UJD4Hsbsm9yJL2YTgNn/wLa19AtkO4arA5BOL4eMjj41YdHWGLiwz29zk7OqJot9HkJK+2t4kgmXmUrIJlXsLdQVlqF9LhzZvK/b5SrydJqp4/1+unT3VuBw8faqPV0k9macNMP8Ld4HD9tH7pwNgYYXaWwzt3eLG6yuilS7QuX+b3lRUO7t/nw06HqStXqKQwCIEM14PDQlUXMJdA4mB9nb1ul9zvc7q1xV/37tHrdpE7IxcvksGiGRkWQq7F5Oa7AGxuDsoS5UyYmKAoSzQ6ipmhWog3HjLsGZBAAjDDcyanBCEgiZQSrvp0mmaiLrAXMjwu66Cfr5CbiXAH6W03JNTkhjr2yP6Aq4XZZiXhFy4E5uftZGeH4XBIubREjJFXu7vY5CRlu83rXk+D42PPZiTpYwPYgttz8M0LGEYYcbAEVPVq5OakK1CCOA2jB/DdV/Ct/QDF5xCewYMps84/ZkT3HCHkECwC0V3JzJNZMSHxUvp5AJ/NgltDFd9D+RGsCW4ArZNmgnOYAM6girB+/C5M7+P8Kyx7g3PV4JwbnCvofvkezm8AGhhzCI1do8sAAAAASUVORK5CYII=
 // ==/UserScript==
 
 (function() {
@@ -37,6 +37,7 @@
     let isPasswordManagerSite = false;
     let cachedMatches = [];
     let lastSubmittedData = null;
+    let floatingButton = null; // 添加浮动按钮引用
 
     // ========== 全局函数定义 ==========
 
@@ -745,6 +746,44 @@
         }
     }
 
+    // ========== 浮动按钮显示/隐藏控制 ==========
+
+    // 显示浮动按钮
+    function showFloatingButton() {
+        if (!floatingButton) {
+            floatingButton = createFloatingButton();
+        } else if (!document.body.contains(floatingButton)) {
+            document.body.appendChild(floatingButton);
+        }
+        floatingButton.style.display = 'flex';
+        console.log('👁️ 浮动按钮已显示');
+    }
+
+    // 隐藏浮动按钮
+    function hideFloatingButton() {
+        if (floatingButton && document.body.contains(floatingButton)) {
+            floatingButton.style.display = 'none';
+            console.log('👁️ 浮动按钮已隐藏');
+        }
+    }
+
+    // 更新按钮显示状态
+    function updateButtonVisibility() {
+        if (isPasswordManagerSite) {
+            // 在密码管理器网站上始终显示
+            showFloatingButton();
+            return;
+        }
+
+        if (detectedForms.length > 0) {
+            // 检测到登录表单时显示
+            showFloatingButton();
+        } else {
+            // 没有登录表单时隐藏
+            hideFloatingButton();
+        }
+    }
+
     // ========== 样式 ==========
 
     GM_addStyle(`
@@ -787,56 +826,166 @@
             position: fixed;
             bottom: 20px;
             right: 20px;
-            width: 56px;
-            height: 56px;
-            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            /* 设置最小尺寸以确保按钮可见 */
+            min-width: 48px;
+            min-height: 48px;
+            background: transparent;
             border: none;
-            border-radius: 50%;
-            color: white;
-            font-size: 20px;
             cursor: pointer;
-            box-shadow: 0 8px 20px rgba(99, 102, 241, 0.3);
             z-index: 9999;
             transition: all 0.3s ease;
             display: flex;
             align-items: center;
             justify-content: center;
+            user-select: none;
+            /* 添加呼吸效果 */
+            animation: breathe 4s ease-in-out infinite;
+            /* 拖拽相关样式 */
+            touch-action: none;
+            padding: 0;
+            margin: 0;
+            /* 确保按钮有边界 */
+            border-radius: 50%;
         }
 
         .pm-floating-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 12px 25px rgba(99, 102, 241, 0.4);
+            animation-play-state: paused; /* 悬停时暂停呼吸效果 */
+            transform: scale(1.1);
+            filter: brightness(1.2) drop-shadow(0 8px 16px rgba(0,0,0,0.3));
         }
 
+        .pm-floating-btn.dragging {
+            animation-play-state: paused; /* 拖拽时暂停呼吸效果 */
+            transform: scale(1.1);
+            cursor: grabbing;
+            filter: brightness(1.3) drop-shadow(0 12px 24px rgba(0,0,0,0.4));
+        }
+
+        /* 不同状态下的呼吸效果 */
         .pm-floating-btn.has-matches {
-            background: linear-gradient(135deg, #10b981, #059669);
-            animation: pulse 2s infinite;
+            animation: breatheMatched 3.5s ease-in-out infinite;
         }
 
         .pm-floating-btn.multiple-matches {
-            background: linear-gradient(135deg, #f59e0b, #d97706);
+            animation: breatheMultiple 3s ease-in-out infinite;
         }
 
         .pm-floating-btn .match-count {
             position: absolute;
-            top: -5px;
-            right: -5px;
+            top: -8px;
+            right: -8px;
             background: #ef4444;
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
+            width: 22px;
+            height: 22px;
             font-size: 12px;
             font-weight: bold;
             display: flex;
             align-items: center;
             justify-content: center;
             border: 2px solid white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .pm-floating-btn-icon {
+            /* 设置合适的图片尺寸 */
+            width: 48px;
+            height: 48px;
+            object-fit: contain;
+            pointer-events: none;
+            display: block;
+            /* 确保图片清晰显示 */
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+            border-radius: 50%;
+        }
+
+        /* 备用文字图标样式 */
+        .pm-floating-btn.fallback-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: white;
+            font-size: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* 图片呼吸效果动画 - 渐变大小 */
+        @keyframes breathe {
+            0%, 100% {
+                transform: scale(1);
+                filter: brightness(1) drop-shadow(0 4px 8px rgba(0,0,0,0.2));
+            }
+            25% {
+                transform: scale(1.03);
+                filter: brightness(1.05) drop-shadow(0 6px 12px rgba(0,0,0,0.25));
+            }
+            50% {
+                transform: scale(1.08);
+                filter: brightness(1.1) drop-shadow(0 8px 16px rgba(0,0,0,0.3));
+            }
+            75% {
+                transform: scale(1.05);
+                filter: brightness(1.07) drop-shadow(0 7px 14px rgba(0,0,0,0.27));
+            }
+        }
+
+        @keyframes breatheMatched {
+            0%, 100% {
+                transform: scale(1);
+                filter: brightness(1) hue-rotate(0deg) drop-shadow(0 4px 8px rgba(16, 185, 129, 0.3));
+            }
+            25% {
+                transform: scale(1.04);
+                filter: brightness(1.05) hue-rotate(5deg) drop-shadow(0 6px 12px rgba(16, 185, 129, 0.4));
+            }
+            50% {
+                transform: scale(1.1);
+                filter: brightness(1.15) hue-rotate(10deg) drop-shadow(0 8px 16px rgba(16, 185, 129, 0.5));
+            }
+            75% {
+                transform: scale(1.06);
+                filter: brightness(1.08) hue-rotate(7deg) drop-shadow(0 7px 14px rgba(16, 185, 129, 0.45));
+            }
+        }
+
+        @keyframes breatheMultiple {
+            0%, 100% {
+                transform: scale(1);
+                filter: brightness(1) hue-rotate(0deg) drop-shadow(0 4px 8px rgba(245, 158, 11, 0.3));
+            }
+            20% {
+                transform: scale(1.05);
+                filter: brightness(1.1) hue-rotate(-5deg) drop-shadow(0 6px 12px rgba(245, 158, 11, 0.4));
+            }
+            40% {
+                transform: scale(1.12);
+                filter: brightness(1.2) hue-rotate(-10deg) drop-shadow(0 8px 16px rgba(245, 158, 11, 0.5));
+            }
+            60% {
+                transform: scale(1.08);
+                filter: brightness(1.15) hue-rotate(-7deg) drop-shadow(0 7px 14px rgba(245, 158, 11, 0.45));
+            }
+            80% {
+                transform: scale(1.03);
+                filter: brightness(1.05) hue-rotate(-3deg) drop-shadow(0 5px 10px rgba(245, 158, 11, 0.35));
+            }
         }
 
         @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.1); }
+            0%, 100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.1);
+                opacity: 0.8;
+            }
         }
 
         .pm-popup {
@@ -1057,29 +1206,6 @@
         .pm-btn-history:hover {
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-        }
-
-        .pm-quick-fill {
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-            border: none;
-            padding: 12px 16px;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 600;
-            width: 100%;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            transition: all 0.3s ease;
-        }
-
-        .pm-quick-fill:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3);
         }
 
         .pm-login-prompt {
@@ -1458,8 +1584,10 @@
             await verifyAuth();
         }
 
-        createFloatingButton();
+        // 初始检测
         detectLoginForms();
+        updateButtonVisibility();
+
         observeFormChanges();
         registerMenuCommands();
 
@@ -1483,28 +1611,28 @@
 
     // 更新浮动按钮
     function updateFloatingButton(matches) {
-        const floatingBtn = document.querySelector('.pm-floating-btn');
-        if (!floatingBtn) return;
+        if (!floatingButton) return;
 
-        floatingBtn.classList.remove('has-matches', 'multiple-matches');
-        const existingCount = floatingBtn.querySelector('.match-count');
+        // 移除所有状态类
+        floatingButton.classList.remove('has-matches', 'multiple-matches');
+        const existingCount = floatingButton.querySelector('.match-count');
         if (existingCount) existingCount.remove();
 
         if (matches.length > 0) {
             if (matches.length === 1) {
-                floatingBtn.classList.add('has-matches');
-                floatingBtn.title = `找到 1 个匹配的账户`;
+                floatingButton.classList.add('has-matches');
+                floatingButton.title = `找到 1 个匹配的账户`;
             } else {
-                floatingBtn.classList.add('multiple-matches');
-                floatingBtn.title = `找到 ${matches.length} 个匹配的账户`;
+                floatingButton.classList.add('multiple-matches');
+                floatingButton.title = `找到 ${matches.length} 个匹配的账户`;
 
                 const countBadge = document.createElement('div');
                 countBadge.className = 'match-count';
                 countBadge.textContent = matches.length > 9 ? '9+' : matches.length;
-                floatingBtn.appendChild(countBadge);
+                floatingButton.appendChild(countBadge);
             }
         } else {
-            floatingBtn.title = '密码管理助手 Pro';
+            floatingButton.title = '密码管理助手 Pro';
         }
     }
 
@@ -1540,10 +1668,158 @@
     function createFloatingButton() {
         const btn = document.createElement('button');
         btn.className = 'pm-floating-btn';
-        btn.innerHTML = '🔐';
         btn.title = '密码管理助手 Pro';
-        btn.onclick = togglePasswordManager;
-        document.body.appendChild(btn);
+
+        // 从存储中恢复位置
+        const savedPosition = GM_getValue('pm_button_position', { bottom: 20, right: 20 });
+        btn.style.bottom = savedPosition.bottom + 'px';
+        btn.style.right = savedPosition.right + 'px';
+
+        // 尝试加载图片
+        const icon = document.createElement('img');
+        icon.src = 'https://cdn.mevrik.com/uploads/image6848833820236.png';
+        icon.className = 'pm-floating-btn-icon';
+        icon.alt = 'Password Manager';
+
+        // 图片加载成功
+        icon.onload = function() {
+            console.log('🖼️ 密码管理器图标加载成功，尺寸:', icon.naturalWidth + 'x' + icon.naturalHeight);
+            btn.appendChild(icon);
+        };
+
+        // 图片加载失败，使用备用图标
+        icon.onerror = function() {
+            console.error('❌ 密码管理器图标加载失败，使用备用图标');
+            btn.classList.add('fallback-icon');
+            btn.innerHTML = '🔐';
+        };
+
+        // 立即尝试添加图片，如果失败会触发 onerror
+        try {
+            btn.appendChild(icon);
+        } catch (e) {
+            console.error('❌ 添加图片失败，使用备用图标');
+            btn.classList.add('fallback-icon');
+            btn.innerHTML = '🔐';
+        }
+
+        // 添加拖拽功能
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        let startTime = 0;
+
+        // 鼠标事件
+        btn.addEventListener('mousedown', handleDragStart);
+        document.addEventListener('mousemove', handleDragMove);
+        document.addEventListener('mouseup', handleDragEnd);
+
+        // 触摸事件（移动端支持）
+        btn.addEventListener('touchstart', handleTouchStart, { passive: false });
+        document.addEventListener('touchmove', handleTouchMove, { passive: false });
+        document.addEventListener('touchend', handleTouchEnd);
+
+        function handleDragStart(e) {
+            e.preventDefault();
+            startDrag(e.clientX, e.clientY);
+        }
+
+        function handleTouchStart(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            startDrag(touch.clientX, touch.clientY);
+        }
+
+        function startDrag(clientX, clientY) {
+            isDragging = true;
+            startTime = Date.now();
+            btn.classList.add('dragging');
+
+            const rect = btn.getBoundingClientRect();
+            dragOffset.x = clientX - rect.left;
+            dragOffset.y = clientY - rect.top;
+
+            // 禁用点击事件
+            btn.style.pointerEvents = 'none';
+        }
+
+        function handleDragMove(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            updatePosition(e.clientX, e.clientY);
+        }
+
+        function handleTouchMove(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            updatePosition(touch.clientX, touch.clientY);
+        }
+
+        function updatePosition(clientX, clientY) {
+            const newX = clientX - dragOffset.x;
+            const newY = clientY - dragOffset.y;
+
+            // 计算相对于窗口的位置
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            const btnWidth = btn.offsetWidth;
+            const btnHeight = btn.offsetHeight;
+
+            // 限制在窗口范围内
+            const left = Math.max(0, Math.min(newX, windowWidth - btnWidth));
+            const top = Math.max(0, Math.min(newY, windowHeight - btnHeight));
+
+            // 转换为 bottom 和 right 值
+            const bottom = windowHeight - top - btnHeight;
+            const right = windowWidth - left - btnWidth;
+
+            btn.style.bottom = bottom + 'px';
+            btn.style.right = right + 'px';
+            btn.style.left = 'auto';
+            btn.style.top = 'auto';
+        }
+
+        function handleDragEnd(e) {
+            if (!isDragging) return;
+            endDrag();
+        }
+
+        function handleTouchEnd(e) {
+            if (!isDragging) return;
+            endDrag();
+        }
+
+        function endDrag() {
+            const dragDuration = Date.now() - startTime;
+
+            isDragging = false;
+            btn.classList.remove('dragging');
+
+            // 保存位置到存储
+            const bottom = parseInt(btn.style.bottom);
+            const right = parseInt(btn.style.right);
+            GM_setValue('pm_button_position', { bottom, right });
+
+            // 延迟恢复点击事件，避免拖拽结束时触发点击
+            setTimeout(() => {
+                btn.style.pointerEvents = 'auto';
+
+                // 如果拖拽时间很短，认为是点击而不是拖拽
+                if (dragDuration < 200) {
+                    togglePasswordManager();
+                }
+            }, 100);
+        }
+
+        // 点击事件（仅在非拖拽状态下触发）
+        btn.addEventListener('click', (e) => {
+            if (!isDragging) {
+                e.stopPropagation();
+                togglePasswordManager();
+            }
+        });
+
+        return btn;
     }
 
     // 切换密码管理器界面
@@ -1629,7 +1905,6 @@
             const target = e.target;
             const fillButton = target.closest('.pm-btn-fill');
             const historyButton = target.closest('.pm-btn-history');
-            const quickFillButton = target.closest('.pm-quick-fill');
             const loginBtn = target.closest('.pm-login-btn');
             const tokenDisplay = target.closest('.pm-token-display');
             const actionButton = target.closest('.pm-btn');
@@ -1643,10 +1918,6 @@
                 if (passwordId) {
                     viewPasswordHistory(passwordId);
                 }
-            } else if (quickFillButton) {
-                e.preventDefault();
-                const matchData = JSON.parse(quickFillButton.dataset.match);
-                fillPassword(matchData);
             } else if (loginBtn) {
                  window.open(CONFIG.API_BASE, '_blank');
             } else if (tokenDisplay) {
@@ -1733,7 +2004,7 @@
         }
     }
 
-    // 渲染密码匹配
+    // 渲染密码匹配 - 删除快速填充功能
     function renderPasswordMatches(matches) {
         let content = '';
 
@@ -1758,23 +2029,14 @@
             </div>
         `;
 
-        if (matches.length === 1) {
-            const match = matches[0];
-            content += `
-                <button class="pm-quick-fill" data-match='${escapeHtml(JSON.stringify(match))}'>
-                    <span>⚡</span>
-                    <span>快速填充：${escapeHtml(match.username)}</span>
-                </button>
-            `;
-        } else {
-            content += `
-                <div style="margin-bottom: 16px;">
-                    <h4 style="margin: 0 0 12px 0; color: #1f2937; font-size: 14px;">
-                        🔐 选择要填充的账户 (${matches.length} 个)
-                    </h4>
-                </div>
-            `;
-        }
+        // 直接显示密码列表，不再区分单个和多个
+        content += `
+            <div style="margin-bottom: 16px;">
+                <h4 style="margin: 0 0 12px 0; color: #1f2937; font-size: 14px;">
+                    🔐 选择要填充的账户 (${matches.length} 个)
+                </h4>
+            </div>
+        `;
 
         content += renderPasswordList(matches);
         return content;
@@ -1887,8 +2149,13 @@
             }
         });
 
+        console.log(`🔍 检测到 ${detectedForms.length} 个登录表单`);
+
+        // 更新按钮显示状态
+        updateButtonVisibility();
+
         if (detectedForms.length > 0 && !isPasswordManagerSite) {
-            console.log(`🔍 检测到 ${detectedForms.length} 个登录表单`);
+            console.log(`🔍 检测到 ${detectedForms.length} 个登录表单，按钮已显示`);
         }
     }
 
@@ -2070,6 +2337,17 @@
             showNotification('🔍 重新检测完成', 'info');
         });
 
+        GM_registerMenuCommand('📍 重置按钮位置', () => {
+            GM_setValue('pm_button_position', { bottom: 20, right: 20 });
+            if (floatingButton) {
+                floatingButton.style.bottom = '20px';
+                floatingButton.style.right = '20px';
+                floatingButton.style.left = 'auto';
+                floatingButton.style.top = 'auto';
+            }
+            showNotification('📍 按钮位置已重置', 'info');
+        });
+
         GM_registerMenuCommand('⚙️ 设置令牌', () => {
             const token = prompt('请输入密码管理器的登录令牌（可在密码管理器中获取）:');
             if (token) {
@@ -2086,6 +2364,16 @@
             cachedMatches = [];
             updateFloatingButton([]);
             showNotification('👋 已退出登录', 'info');
+        });
+
+        GM_registerMenuCommand('👁️ 强制显示/隐藏按钮', () => {
+            if (floatingButton && floatingButton.style.display === 'none') {
+                showFloatingButton();
+                showNotification('👁️ 按钮已强制显示', 'info');
+            } else {
+                hideFloatingButton();
+                showNotification('👁️ 按钮已隐藏', 'info');
+            }
         });
 
         GM_registerMenuCommand('🧪 测试填充功能', () => {
@@ -2111,6 +2399,8 @@
             console.log('页面URL:', window.location.href);
             console.log('最后提交数据:', lastSubmittedData);
             console.log('配置信息:', CONFIG);
+            console.log('按钮位置:', GM_getValue('pm_button_position', { bottom: 20, right: 20 }));
+            console.log('按钮显示状态:', floatingButton ? floatingButton.style.display : '未创建');
             console.log('pmExtension 对象:', window.pmExtension);
 
             const allInputs = document.querySelectorAll('input');
