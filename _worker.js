@@ -78,7 +78,6 @@ async function handleOAuthLogin(request, env, corsHeaders) {
   authUrl.searchParams.set('client_id', env.OAUTH_CLIENT_ID);
   authUrl.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
   authUrl.searchParams.set('response_type', 'code');
-  authUrl.searchParams.set('scope', 'openid profile email');
   authUrl.searchParams.set('state', state);
   
   // 存储state用于验证
