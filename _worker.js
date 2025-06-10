@@ -134,7 +134,7 @@ async function handleOAuthLogin(request, env, corsHeaders) {
     authUrl.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('state', state);
-    authUrl.searchParams.set('scope', 'read');
+    //authUrl.searchParams.set('scope', 'read');
 
     // 保存state到KV，有效期10分钟
     await env.PASSWORD_KV.put(`oauth_state_${state}`, 'valid', { expirationTtl: 600 });
