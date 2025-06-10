@@ -1,4 +1,4 @@
-// 增强版密码管理器 - Cloudflare Workers + KV + OAuth (完整版)
+// 基于HTML5的增强版密码管理器 - Cloudflare Workers + KV + OAuth
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -18,7 +18,7 @@ export default {
     try {
       // 路由处理
       if (path === '/' || path === '/index.html') {
-        return new Response(getHTML(), {
+        return new Response(getHTML5(), {
           headers: { 'Content-Type': 'text/html', ...corsHeaders }
         });
       }
@@ -188,8 +188,11 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     
     // 重定向到主页面并设置token
     return new Response(`
-      <html>
+      <!DOCTYPE html>
+      <html lang="zh-CN">
         <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>登录成功</title>
           <style>
             body { 
@@ -244,8 +247,11 @@ async function handleOAuthCallback(request, env, corsHeaders) {
   } catch (error) {
     console.error('OAuth callback error:', error);
     return new Response(`
-      <html>
+      <!DOCTYPE html>
+      <html lang="zh-CN">
         <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>登录失败</title>
           <style>
             body { 
@@ -1111,16 +1117,27 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML界面（生动版本）
-function getHTML() {
+// HTML5语义化界面
+function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔐 密码管理器 Pro</title>
+    <meta name="description" content="安全、便捷、智能的密码管理解决方案">
+    <meta name="keywords" content="密码管理器,密码安全,OAuth登录,WebDAV备份">
+    <meta name="author" content="Password Manager Pro">
+    <title>🔐 密码管理器 Pro - 安全便捷的密码管理解决方案</title>
+    
+    <!-- 图标和主题 -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔐</text></svg>">
+    <meta name="theme-color" content="#6366f1">
+    
+    <!-- 外部资源 -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
     <style>
+        /* CSS 自定义属性 */
         :root {
             --primary-color: #6366f1;
             --primary-dark: #4f46e5;
@@ -1128,28 +1145,80 @@ function getHTML() {
             --success-color: #10b981;
             --warning-color: #f59e0b;
             --danger-color: #ef4444;
+            --info-color: #3b82f6;
             --dark-color: #1f2937;
             --light-color: #f8fafc;
             --border-color: #e5e7eb;
             --text-primary: #111827;
             --text-secondary: #6b7280;
+            --text-muted: #9ca3af;
+            --background-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --card-background: rgba(255, 255, 255, 0.95);
             --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
             --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
             --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            --border-radius-sm: 8px;
+            --border-radius-md: 12px;
+            --border-radius-lg: 16px;
+            --border-radius-xl: 20px;
+            --border-radius-2xl: 24px;
+            --transition-fast: 0.15s ease;
+            --transition-normal: 0.3s ease;
+            --transition-slow: 0.5s ease;
         }
 
-        * {
+        /* 基础重置 */
+        *, *::before, *::after {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
+        /* 根元素和文档 */
+        html {
+            font-size: 16px;
+            scroll-behavior: smooth;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--background-gradient);
             min-height: 100vh;
             color: var(--text-primary);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* 无障碍支持 */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        /* 跳过链接 */
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 6px;
+            background: var(--primary-color);
+            color: white;
+            padding: 8px;
+            text-decoration: none;
+            border-radius: var(--border-radius-sm);
+            z-index: 1000;
+        }
+
+        .skip-link:focus {
+            top: 6px;
         }
 
         /* 粒子背景效果 */
@@ -1161,6 +1230,7 @@ function getHTML() {
             height: 100%;
             pointer-events: none;
             z-index: -1;
+            overflow: hidden;
         }
 
         .particle {
@@ -1188,22 +1258,22 @@ function getHTML() {
         }
 
         /* 登录界面 */
-        .auth-container {
+        .auth-section {
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            padding: 20px;
+            padding: 1.25rem;
         }
 
         .auth-card {
-            background: rgba(255, 255, 255, 0.95);
+            background: var(--card-background);
             backdrop-filter: blur(20px);
-            padding: 50px 40px;
-            border-radius: 24px;
+            padding: 3.125rem 2.5rem;
+            border-radius: var(--border-radius-2xl);
             box-shadow: var(--shadow-xl);
             text-align: center;
-            max-width: 450px;
+            max-width: 28.125rem;
             width: 100%;
             border: 1px solid rgba(255, 255, 255, 0.2);
             animation: slideInUp 0.6s ease-out;
@@ -1221,8 +1291,8 @@ function getHTML() {
         }
 
         .auth-card .logo {
-            font-size: 64px;
-            margin-bottom: 24px;
+            font-size: 4rem;
+            margin-bottom: 1.5rem;
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -1236,61 +1306,32 @@ function getHTML() {
 
         .auth-card h1 {
             color: var(--text-primary);
-            margin-bottom: 12px;
-            font-size: 32px;
+            margin-bottom: 0.75rem;
+            font-size: 2rem;
             font-weight: 700;
         }
 
         .auth-card p {
             color: var(--text-secondary);
-            margin-bottom: 40px;
-            font-size: 16px;
+            margin-bottom: 2.5rem;
+            font-size: 1rem;
         }
 
-        .oauth-button {
-            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-            color: white;
-            border: none;
-            padding: 16px 32px;
-            border-radius: 50px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            width: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            box-shadow: var(--shadow-md);
-        }
-
-        .oauth-button:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-lg);
-        }
-
-        .oauth-button:disabled {
-            background: #9ca3af;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        /* 主界面容器 */
-        .container {
-            max-width: 1400px;
+        /* 主应用容器 */
+        .app-container {
+            max-width: 87.5rem;
             margin: 0 auto;
-            padding: 20px;
+            padding: 1.25rem;
         }
 
-        /* 头部 */
-        .header {
-            background: rgba(255, 255, 255, 0.95);
+        /* 头部区域 */
+        .app-header {
+            background: var(--card-background);
             backdrop-filter: blur(20px);
-            padding: 24px;
-            border-radius: 20px;
+            padding: 1.5rem;
+            border-radius: var(--border-radius-xl);
             box-shadow: var(--shadow-lg);
-            margin-bottom: 30px;
+            margin-bottom: 1.875rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -1309,15 +1350,15 @@ function getHTML() {
             }
         }
 
-        .user-info {
+        .user-profile {
             display: flex;
             align-items: center;
-            gap: 16px;
+            gap: 1rem;
         }
 
         .user-avatar {
-            width: 56px;
-            height: 56px;
+            width: 3.5rem;
+            height: 3.5rem;
             border-radius: 50%;
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             display: flex;
@@ -1325,10 +1366,10 @@ function getHTML() {
             justify-content: center;
             color: white;
             font-weight: bold;
-            font-size: 20px;
+            font-size: 1.25rem;
             overflow: hidden;
             box-shadow: var(--shadow-md);
-            transition: transform 0.3s ease;
+            transition: transform var(--transition-normal);
         }
 
         .user-avatar:hover {
@@ -1341,34 +1382,35 @@ function getHTML() {
             object-fit: cover;
         }
 
-        .user-details h3 {
+        .user-info h2 {
             color: var(--text-primary);
-            margin-bottom: 4px;
-            font-size: 18px;
+            margin-bottom: 0.25rem;
+            font-size: 1.125rem;
             font-weight: 600;
         }
 
-        .user-details p {
+        .user-info p {
             color: var(--text-secondary);
-            font-size: 14px;
+            font-size: 0.875rem;
         }
 
         .header-actions {
             display: flex;
-            gap: 12px;
+            gap: 0.75rem;
+            flex-wrap: wrap;
         }
 
         /* 工具栏 */
-        .toolbar {
-            background: rgba(255, 255, 255, 0.95);
+        .app-toolbar {
+            background: var(--card-background);
             backdrop-filter: blur(20px);
-            padding: 24px;
-            border-radius: 20px;
+            padding: 1.5rem;
+            border-radius: var(--border-radius-xl);
             box-shadow: var(--shadow-lg);
-            margin-bottom: 30px;
+            margin-bottom: 1.875rem;
             display: flex;
             flex-wrap: wrap;
-            gap: 16px;
+            gap: 1rem;
             align-items: center;
             border: 1px solid rgba(255, 255, 255, 0.2);
             animation: slideInLeft 0.6s ease-out;
@@ -1385,45 +1427,45 @@ function getHTML() {
             }
         }
 
-        .search-box {
+        .search-container {
             flex: 1;
-            min-width: 300px;
+            min-width: 18.75rem;
             position: relative;
         }
 
-        .search-box input {
+        .search-input {
             width: 100%;
-            padding: 14px 16px 14px 48px;
+            padding: 0.875rem 1rem 0.875rem 3rem;
             border: 2px solid var(--border-color);
             border-radius: 50px;
-            font-size: 16px;
-            transition: all 0.3s ease;
+            font-size: 1rem;
+            transition: all var(--transition-normal);
             background: rgba(255, 255, 255, 0.8);
         }
 
-        .search-box input:focus {
+        .search-input:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
         }
 
-        .search-box i {
+        .search-icon {
             position: absolute;
-            left: 16px;
+            left: 1rem;
             top: 50%;
             transform: translateY(-50%);
             color: var(--text-secondary);
-            font-size: 18px;
+            font-size: 1.125rem;
         }
 
         .filter-select {
-            padding: 14px 20px;
+            padding: 0.875rem 1.25rem;
             border: 2px solid var(--border-color);
             border-radius: 50px;
-            font-size: 16px;
+            font-size: 1rem;
             background: rgba(255, 255, 255, 0.8);
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all var(--transition-normal);
         }
 
         .filter-select:focus {
@@ -1431,25 +1473,36 @@ function getHTML() {
             border-color: var(--primary-color);
         }
 
-        /* 按钮样式 */
+        /* 按钮组件 */
         .btn {
-            padding: 12px 24px;
+            padding: 0.75rem 1.5rem;
             border: none;
             border-radius: 50px;
-            font-size: 16px;
+            font-size: 1rem;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all var(--transition-normal);
             display: inline-flex;
             align-items: center;
-            gap: 8px;
+            gap: 0.5rem;
             text-decoration: none;
             box-shadow: var(--shadow-sm);
+            white-space: nowrap;
         }
 
         .btn:hover {
             transform: translateY(-2px);
             box-shadow: var(--shadow-md);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .btn-primary {
@@ -1477,11 +1530,26 @@ function getHTML() {
             color: white;
         }
 
+        .btn-info {
+            background: linear-gradient(135deg, var(--info-color), #2563eb);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+
+        .btn-lg {
+            padding: 1rem 2rem;
+            font-size: 1.125rem;
+        }
+
         /* 密码网格 */
         .passwords-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-            gap: 24px;
+            grid-template-columns: repeat(auto-fill, minmax(23.75rem, 1fr));
+            gap: 1.5rem;
             animation: fadeIn 0.6s ease-out;
         }
 
@@ -1490,13 +1558,14 @@ function getHTML() {
             to { opacity: 1; }
         }
 
+        /* 密码卡片 */
         .password-card {
-            background: rgba(255, 255, 255, 0.95);
+            background: var(--card-background);
             backdrop-filter: blur(20px);
-            border-radius: 20px;
-            padding: 28px;
+            border-radius: var(--border-radius-xl);
+            padding: 1.75rem;
             box-shadow: var(--shadow-lg);
-            transition: all 0.3s ease;
+            transition: all var(--transition-normal);
             position: relative;
             border: 1px solid rgba(255, 255, 255, 0.2);
             overflow: hidden;
@@ -1520,76 +1589,84 @@ function getHTML() {
         .password-header {
             display: flex;
             align-items: center;
-            gap: 16px;
-            margin-bottom: 24px;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
         }
 
         .site-icon {
-            width: 56px;
-            height: 56px;
-            border-radius: 16px;
+            width: 3.5rem;
+            height: 3.5rem;
+            border-radius: var(--border-radius-lg);
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 24px;
+            font-size: 1.5rem;
             box-shadow: var(--shadow-md);
         }
 
-        .password-info h3 {
+        .password-meta h3 {
             color: var(--text-primary);
-            margin-bottom: 8px;
-            font-size: 20px;
+            margin-bottom: 0.5rem;
+            font-size: 1.25rem;
             font-weight: 700;
         }
 
-        .password-info .category {
+        .category-badge {
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             color: white;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
+            padding: 0.25rem 0.75rem;
+            border-radius: var(--border-radius-xl);
+            font-size: 0.75rem;
             font-weight: 600;
             display: inline-block;
         }
 
         .password-field {
-            margin: 16px 0;
+            margin: 1rem 0;
         }
 
         .password-field label {
             display: block;
             color: var(--text-secondary);
-            font-size: 14px;
+            font-size: 0.875rem;
             font-weight: 600;
-            margin-bottom: 6px;
+            margin-bottom: 0.375rem;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
 
         .password-field .value {
             color: var(--text-primary);
-            font-size: 16px;
+            font-size: 1rem;
             word-break: break-all;
             font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
         }
 
+        .password-field .value a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .password-field .value a:hover {
+            text-decoration: underline;
+        }
+
         .password-actions {
             display: flex;
-            gap: 8px;
-            margin-top: 24px;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
             flex-wrap: wrap;
         }
 
         .password-actions .btn {
             flex: 1;
-            min-width: 80px;
-            padding: 10px 16px;
-            font-size: 14px;
+            min-width: 5rem;
+            justify-content: center;
         }
 
-        /* 浮动模态框 */
+        /* 模态框 */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -1607,15 +1684,15 @@ function getHTML() {
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            padding: 1.25rem;
         }
 
         .modal {
-            background: rgba(255, 255, 255, 0.98);
+            background: var(--card-background);
             backdrop-filter: blur(20px);
-            border-radius: 24px;
-            padding: 32px;
-            max-width: 600px;
+            border-radius: var(--border-radius-2xl);
+            padding: 2rem;
+            max-width: 37.5rem;
             width: 100%;
             max-height: 90vh;
             overflow-y: auto;
@@ -1635,30 +1712,30 @@ function getHTML() {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 28px;
-            padding-bottom: 16px;
+            margin-bottom: 1.75rem;
+            padding-bottom: 1rem;
             border-bottom: 2px solid var(--border-color);
         }
 
         .modal-header h2 {
             color: var(--text-primary);
-            font-size: 24px;
+            font-size: 1.5rem;
             font-weight: 700;
         }
 
         .close-btn {
             background: none;
             border: none;
-            font-size: 28px;
+            font-size: 1.75rem;
             cursor: pointer;
             color: var(--text-secondary);
-            width: 40px;
-            height: 40px;
+            width: 2.5rem;
+            height: 2.5rem;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.3s ease;
+            transition: all var(--transition-normal);
         }
 
         .close-btn:hover {
@@ -1666,88 +1743,88 @@ function getHTML() {
             color: var(--text-primary);
         }
 
-        /* 表单样式 */
+        /* 表单组件 */
         .form-group {
-            margin-bottom: 24px;
+            margin-bottom: 1.5rem;
         }
 
         .form-group label {
             display: block;
             color: var(--text-primary);
-            margin-bottom: 8px;
+            margin-bottom: 0.5rem;
             font-weight: 600;
-            font-size: 14px;
+            font-size: 0.875rem;
         }
 
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
+        .form-control {
             width: 100%;
-            padding: 14px 16px;
+            padding: 0.875rem 1rem;
             border: 2px solid var(--border-color);
-            border-radius: 12px;
-            font-size: 16px;
-            transition: all 0.3s ease;
+            border-radius: var(--border-radius-md);
+            font-size: 1rem;
+            transition: all var(--transition-normal);
             background: rgba(255, 255, 255, 0.8);
         }
 
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
+        .form-control:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
         }
 
-        .password-input-group {
+        .input-group {
             position: relative;
         }
 
-        .password-toggle {
+        .input-group-append {
             position: absolute;
-            right: 16px;
+            right: 1rem;
             top: 50%;
             transform: translateY(-50%);
+        }
+
+        .toggle-btn {
             background: none;
             border: none;
             cursor: pointer;
             color: var(--text-secondary);
-            padding: 8px;
-            border-radius: 8px;
-            transition: all 0.3s ease;
+            padding: 0.5rem;
+            border-radius: var(--border-radius-sm);
+            transition: all var(--transition-normal);
         }
 
-        .password-toggle:hover {
+        .toggle-btn:hover {
             background: var(--border-color);
             color: var(--text-primary);
         }
 
+        /* 密码生成器 */
         .password-generator {
             background: linear-gradient(135deg, #f8fafc, #f1f5f9);
-            padding: 24px;
-            border-radius: 16px;
-            margin-bottom: 24px;
+            padding: 1.5rem;
+            border-radius: var(--border-radius-lg);
+            margin-bottom: 1.5rem;
             border: 2px solid var(--border-color);
         }
 
         .password-generator h4 {
             color: var(--text-primary);
-            margin-bottom: 16px;
-            font-size: 16px;
+            margin-bottom: 1rem;
+            font-size: 1rem;
             font-weight: 700;
         }
 
         .generator-options {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 16px;
+            grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
         }
 
         .checkbox-group {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 0.5rem;
         }
 
         .checkbox-group input[type="checkbox"] {
@@ -1755,19 +1832,35 @@ function getHTML() {
             accent-color: var(--primary-color);
         }
 
+        .range-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .range-input {
+            width: 100%;
+            accent-color: var(--primary-color);
+        }
+
+        .range-value {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+
         /* 分类管理 */
         .category-manager {
             background: linear-gradient(135deg, #f8fafc, #f1f5f9);
-            padding: 20px;
-            border-radius: 16px;
-            margin-bottom: 24px;
+            padding: 1.25rem;
+            border-radius: var(--border-radius-lg);
+            margin-bottom: 1.5rem;
             border: 2px solid var(--border-color);
         }
 
         .category-input-group {
             display: flex;
-            gap: 12px;
-            margin-bottom: 16px;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
         }
 
         .category-input-group input {
@@ -1777,25 +1870,25 @@ function getHTML() {
         .category-tags {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 0.5rem;
         }
 
         .category-tag {
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             color: white;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 12px;
+            padding: 0.375rem 0.75rem;
+            border-radius: var(--border-radius-xl);
+            font-size: 0.75rem;
             font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 0.375rem;
         }
 
         .category-tag .remove {
             cursor: pointer;
             opacity: 0.7;
-            transition: opacity 0.3s ease;
+            transition: opacity var(--transition-normal);
         }
 
         .category-tag .remove:hover {
@@ -1805,28 +1898,28 @@ function getHTML() {
         /* WebDAV配置 */
         .webdav-section {
             background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
-            padding: 24px;
-            border-radius: 16px;
-            margin-bottom: 24px;
+            padding: 1.5rem;
+            border-radius: var(--border-radius-lg);
+            margin-bottom: 1.5rem;
             border: 2px solid #bae6fd;
         }
 
         .webdav-section h4 {
             color: var(--text-primary);
-            margin-bottom: 16px;
-            font-size: 18px;
+            margin-bottom: 1rem;
+            font-size: 1.125rem;
             font-weight: 700;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 0.5rem;
         }
 
         .backup-files {
-            max-height: 200px;
+            max-height: 12.5rem;
             overflow-y: auto;
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 12px;
+            border-radius: var(--border-radius-sm);
+            padding: 0.75rem;
             background: white;
         }
 
@@ -1834,7 +1927,7 @@ function getHTML() {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 8px 0;
+            padding: 0.5rem 0;
             border-bottom: 1px solid var(--border-color);
         }
 
@@ -1842,74 +1935,56 @@ function getHTML() {
             border-bottom: none;
         }
 
-        /* 响应式设计 */
-        @media (max-width: 768px) {
-            .container { padding: 12px; }
-            
-            .header {
-                flex-direction: column;
-                gap: 16px;
-                text-align: center;
-            }
-            
-            .toolbar {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            
-            .search-box {
-                min-width: auto;
-            }
-            
-            .passwords-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .password-actions {
-                flex-direction: column;
-            }
-
-            .modal {
-                margin: 20px;
-                padding: 24px;
-            }
+        .backup-file-actions {
+            display: flex;
+            gap: 0.5rem;
         }
 
-        .hidden { display: none !important; }
-
-        /* 加载动画 */
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(255, 255, 255, 0.3);
-            border-top: 3px solid white;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
+        /* 空状态 */
+        .empty-state {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 5rem 1.25rem;
+            color: var(--text-secondary);
         }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .empty-state .icon {
+            font-size: 4rem;
+            margin-bottom: 1.5rem;
+            opacity: 0.5;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
-        /* 通知样式 */
+        .empty-state h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-primary);
+        }
+
+        .empty-state p {
+            font-size: 1rem;
+        }
+
+        /* 通知组件 */
         .notification {
             position: fixed;
-            top: 24px;
-            right: 24px;
+            top: 1.5rem;
+            right: 1.5rem;
             background: var(--success-color);
             color: white;
-            padding: 16px 24px;
-            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            border-radius: var(--border-radius-md);
             box-shadow: var(--shadow-lg);
             z-index: 1001;
-            transform: translateX(400px);
-            transition: transform 0.3s ease;
+            transform: translateX(25rem);
+            transition: transform var(--transition-normal);
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 0.75rem;
             font-weight: 600;
+            max-width: 20rem;
         }
 
         .notification.show {
@@ -1924,133 +1999,295 @@ function getHTML() {
             background: var(--warning-color);
         }
 
-        /* 空状态 */
-        .empty-state {
-            grid-column: 1 / -1;
-            text-align: center;
-            padding: 80px 20px;
-            color: var(--text-secondary);
+        .notification.info {
+            background: var(--info-color);
         }
 
-        .empty-state i {
-            font-size: 64px;
-            margin-bottom: 24px;
-            opacity: 0.5;
-            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+        /* 加载动画 */
+        .loading {
+            display: inline-block;
+            width: 1.25rem;
+            height: 1.25rem;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
         }
 
-        .empty-state h3 {
-            font-size: 24px;
-            margin-bottom: 12px;
-            color: var(--text-primary);
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
-        .empty-state p {
-            font-size: 16px;
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .app-container { 
+                padding: 0.75rem; 
+            }
+            
+            .app-header {
+                flex-direction: column;
+                gap: 1rem;
+                text-align: center;
+            }
+            
+            .header-actions {
+                justify-content: center;
+            }
+            
+            .app-toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .search-container {
+                min-width: auto;
+            }
+            
+            .passwords-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .password-actions {
+                flex-direction: column;
+            }
+
+            .modal {
+                margin: 1.25rem;
+                padding: 1.5rem;
+            }
+
+            .generator-options {
+                grid-template-columns: 1fr;
+            }
+
+            .notification {
+                right: 0.75rem;
+                left: 0.75rem;
+                max-width: none;
+                transform: translateY(-5rem);
+            }
+
+            .notification.show {
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 480px) {
+            .auth-card {
+                padding: 2rem 1.5rem;
+            }
+
+            .passwords-grid {
+                gap: 1rem;
+            }
+
+            .password-card {
+                padding: 1.25rem;
+            }
+        }
+
+        /* 工具类 */
+        .hidden { 
+            display: none !important; 
+        }
+
+        .text-center { 
+            text-align: center; 
+        }
+
+        .text-left { 
+            text-align: left; 
+        }
+
+        .text-right { 
+            text-align: right; 
+        }
+
+        .mb-0 { margin-bottom: 0; }
+        .mb-1 { margin-bottom: 0.25rem; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-3 { margin-bottom: 0.75rem; }
+        .mb-4 { margin-bottom: 1rem; }
+
+        .mt-0 { margin-top: 0; }
+        .mt-1 { margin-top: 0.25rem; }
+        .mt-2 { margin-top: 0.5rem; }
+        .mt-3 { margin-top: 0.75rem; }
+        .mt-4 { margin-top: 1rem; }
+
+        .flex { display: flex; }
+        .flex-col { flex-direction: column; }
+        .items-center { align-items: center; }
+        .justify-center { justify-content: center; }
+        .justify-between { justify-content: space-between; }
+        .gap-1 { gap: 0.25rem; }
+        .gap-2 { gap: 0.5rem; }
+        .gap-3 { gap: 0.75rem; }
+        .gap-4 { gap: 1rem; }
+
+        .w-full { width: 100%; }
+        .h-full { height: 100%; }
+
+        /* 深色模式支持 */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text-primary: #f9fafb;
+                --text-secondary: #d1d5db;
+                --text-muted: #9ca3af;
+                --border-color: #374151;
+                --card-background: rgba(31, 41, 55, 0.95);
+                --light-color: #1f2937;
+            }
+        }
+
+        /* 打印样式 */
+        @media print {
+            .particles,
+            .header-actions,
+            .app-toolbar,
+            .password-actions,
+            .modal-overlay {
+                display: none !important;
+            }
+
+            body {
+                background: white;
+            }
+
+            .password-card {
+                break-inside: avoid;
+                box-shadow: none;
+                border: 1px solid #e5e7eb;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- 跳过链接 -->
+    <a href="#main-content" class="skip-link">跳到主要内容</a>
+
     <!-- 粒子背景 -->
-    <div class="particles" id="particles"></div>
+    <div class="particles" id="particles" aria-hidden="true"></div>
 
     <!-- 登录界面 -->
-    <div id="authContainer" class="auth-container">
-        <div class="auth-card">
-            <div class="logo">🔐</div>
-            <h1>密码管理器 Pro</h1>
-            <p>安全、便捷、智能的密码管理解决方案</p>
-            <button id="oauthLoginBtn" class="oauth-button">
-                <i class="fas fa-sign-in-alt"></i>
+    <section id="authSection" class="auth-section" role="main">
+        <article class="auth-card">
+            <div class="logo" aria-hidden="true">🔐</div>
+            <header>
+                <h1>密码管理器 Pro</h1>
+                <p>安全、便捷、智能的密码管理解决方案</p>
+            </header>
+            <button id="oauthLoginBtn" class="btn btn-primary btn-lg" type="button">
+                <i class="fas fa-sign-in-alt" aria-hidden="true"></i>
                 开始使用 OAuth 登录
             </button>
-        </div>
-    </div>
+        </article>
+    </section>
 
-    <!-- 主界面 -->
-    <div id="mainContainer" class="container hidden">
-        <!-- 头部 -->
-        <div class="header">
-            <div class="user-info">
-                <div class="user-avatar" id="userAvatar">
-                    <i class="fas fa-user"></i>
+    <!-- 主应用界面 -->
+    <div id="mainApp" class="app-container hidden">
+        <!-- 应用头部 -->
+        <header class="app-header">
+            <div class="user-profile">
+                <div class="user-avatar" id="userAvatar" role="img" aria-label="用户头像">
+                    <i class="fas fa-user" aria-hidden="true"></i>
                 </div>
-                <div class="user-details">
-                    <h3 id="userName">用户名</h3>
+                <div class="user-info">
+                    <h2 id="userName">用户名</h2>
                     <p id="userEmail">user@example.com</p>
                 </div>
             </div>
-            <div class="header-actions">
-                <button class="btn btn-warning" onclick="showWebDAVModal()">
-                    <i class="fas fa-cloud"></i> 备份
+            <nav class="header-actions" role="navigation" aria-label="主要操作">
+                <button class="btn btn-warning" onclick="showWebDAVModal()" type="button">
+                    <i class="fas fa-cloud" aria-hidden="true"></i> 
+                    <span>备份</span>
                 </button>
-                <button class="btn btn-secondary" onclick="showExportModal()">
-                    <i class="fas fa-download"></i> 导出
+                <button class="btn btn-secondary" onclick="showExportModal()" type="button">
+                    <i class="fas fa-download" aria-hidden="true"></i> 
+                    <span>导出</span>
                 </button>
-                <button class="btn btn-secondary" onclick="showImportModal()">
-                    <i class="fas fa-upload"></i> 导入
+                <button class="btn btn-secondary" onclick="showImportModal()" type="button">
+                    <i class="fas fa-upload" aria-hidden="true"></i> 
+                    <span>导入</span>
                 </button>
-                <button class="btn btn-danger" onclick="logout()">
-                    <i class="fas fa-sign-out-alt"></i> 登出
+                <button class="btn btn-danger" onclick="logout()" type="button">
+                    <i class="fas fa-sign-out-alt" aria-hidden="true"></i> 
+                    <span>登出</span>
                 </button>
-            </div>
-        </div>
+            </nav>
+        </header>
 
         <!-- 工具栏 -->
-        <div class="toolbar">
-            <div class="search-box">
-                <i class="fas fa-search"></i>
-                <input type="text" id="searchInput" placeholder="搜索网站、用户名或备注...">
+        <section class="app-toolbar" role="search">
+            <div class="search-container">
+                <label for="searchInput" class="sr-only">搜索密码</label>
+                <i class="fas fa-search search-icon" aria-hidden="true"></i>
+                <input 
+                    type="search" 
+                    id="searchInput" 
+                    class="search-input"
+                    placeholder="搜索网站、用户名或备注..."
+                    autocomplete="off"
+                >
             </div>
-            <select id="categoryFilter" class="filter-select">
-                <option value="">🏷️ 所有分类</option>
-            </select>
-            <button class="btn btn-primary" onclick="showAddModal()">
-                <i class="fas fa-plus"></i> 添加密码
+            <div>
+                <label for="categoryFilter" class="sr-only">按分类筛选</label>
+                <select id="categoryFilter" class="filter-select">
+                    <option value="">🏷️ 所有分类</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="showAddModal()" type="button">
+                <i class="fas fa-plus" aria-hidden="true"></i> 
+                <span>添加密码</span>
             </button>
-        </div>
+        </section>
 
-        <!-- 密码列表 -->
-        <div id="passwordsGrid" class="passwords-grid">
-            <!-- 密码卡片将在这里动态生成 -->
-        </div>
+        <!-- 主要内容区域 -->
+        <main id="main-content" role="main">
+            <section class="passwords-grid" id="passwordsGrid" role="region" aria-label="密码列表">
+                <!-- 密码卡片将在这里动态生成 -->
+            </section>
+        </main>
     </div>
 
     <!-- 添加/编辑密码模态框 -->
-    <div id="passwordModalOverlay" class="modal-overlay">
+    <div id="passwordModalOverlay" class="modal-overlay" role="dialog" aria-labelledby="modalTitle" aria-hidden="true">
         <div class="modal">
-            <div class="modal-header">
+            <header class="modal-header">
                 <h2 id="modalTitle">✨ 添加新密码</h2>
-                <button class="close-btn" onclick="closePasswordModal()">&times;</button>
-            </div>
-            <form id="passwordForm">
+                <button class="close-btn" onclick="closePasswordModal()" type="button" aria-label="关闭对话框">
+                    &times;
+                </button>
+            </header>
+            <form id="passwordForm" novalidate>
                 <div class="form-group">
                     <label for="siteName">🌐 网站名称 *</label>
-                    <input type="text" id="siteName" required placeholder="例如：GitHub、Gmail">
+                    <input type="text" id="siteName" class="form-control" required placeholder="例如：GitHub、Gmail" autocomplete="off">
                 </div>
                 <div class="form-group">
                     <label for="username">👤 用户名/邮箱 *</label>
-                    <input type="text" id="username" required placeholder="your@email.com">
+                    <input type="text" id="username" class="form-control" required placeholder="your@email.com" autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="password">🔑 密码 *</label>
-                    <div class="password-input-group">
-                        <input type="password" id="password" required placeholder="输入密码">
-                        <button type="button" class="password-toggle" onclick="togglePasswordVisibility('password')">
-                            <i class="fas fa-eye"></i>
-                        </button>
+                    <div class="input-group">
+                        <input type="password" id="password" class="form-control" required placeholder="输入密码" autocomplete="new-password">
+                        <div class="input-group-append">
+                            <button type="button" class="toggle-btn" onclick="togglePasswordVisibility('password')" aria-label="显示/隐藏密码">
+                                <i class="fas fa-eye" aria-hidden="true"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
                 
                 <!-- 密码生成器 -->
-                <div class="password-generator">
-                    <h4>🎲 智能密码生成器</h4>
+                <fieldset class="password-generator">
+                    <legend>🎲 智能密码生成器</legend>
                     <div class="generator-options">
                         <div class="form-group">
-                            <label for="passwordLength">长度: <span id="lengthValue">16</span></label>
-                            <input type="range" id="passwordLength" min="8" max="32" value="16">
+                            <label for="passwordLength">长度: <span id="lengthValue" class="range-value">16</span></label>
+                            <input type="range" id="passwordLength" class="range-input" min="8" max="32" value="16">
                         </div>
                         <div class="checkbox-group">
                             <input type="checkbox" id="includeUppercase" checked>
@@ -2070,42 +2307,43 @@ function getHTML() {
                         </div>
                     </div>
                     <button type="button" class="btn btn-secondary" onclick="generatePassword()">
-                        <i class="fas fa-magic"></i> 生成强密码
+                        <i class="fas fa-magic" aria-hidden="true"></i> 生成强密码
                     </button>
-                </div>
+                </fieldset>
 
                 <!-- 分类管理 -->
-                <div class="category-manager">
-                    <h4>🏷️ 分类管理</h4>
+                <fieldset class="category-manager">
+                    <legend>🏷️ 分类管理</legend>
                     <div class="category-input-group">
-                        <input type="text" id="newCategoryInput" placeholder="添加新分类">
+                        <label for="newCategoryInput" class="sr-only">新分类名称</label>
+                        <input type="text" id="newCategoryInput" class="form-control" placeholder="添加新分类">
                         <button type="button" class="btn btn-primary" onclick="addCategory()">
-                            <i class="fas fa-plus"></i>
+                            <i class="fas fa-plus" aria-hidden="true"></i>
                         </button>
                     </div>
-                    <div class="category-tags" id="categoryTags"></div>
-                </div>
+                    <div class="category-tags" id="categoryTags" role="list" aria-label="已有分类"></div>
+                </fieldset>
 
                 <div class="form-group">
                     <label for="category">📁 选择分类</label>
-                    <select id="category">
+                    <select id="category" class="form-control">
                         <option value="">选择分类</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label for="url">🔗 网站链接</label>
-                    <input type="url" id="url" placeholder="https://example.com">
+                    <input type="url" id="url" class="form-control" placeholder="https://example.com" autocomplete="url">
                 </div>
                 <div class="form-group">
                     <label for="notes">📝 备注信息</label>
-                    <textarea id="notes" rows="3" placeholder="添加备注信息..."></textarea>
+                    <textarea id="notes" class="form-control" rows="3" placeholder="添加备注信息..."></textarea>
                 </div>
-                <div style="display: flex; gap: 16px; margin-top: 32px;">
-                    <button type="submit" class="btn btn-primary" style="flex: 1;">
-                        <i class="fas fa-save"></i> 保存密码
+                <div class="flex gap-4 mt-4">
+                    <button type="submit" class="btn btn-primary w-full">
+                        <i class="fas fa-save" aria-hidden="true"></i> 保存密码
                     </button>
                     <button type="button" class="btn btn-secondary" onclick="closePasswordModal()">
-                        <i class="fas fa-times"></i> 取消
+                        <i class="fas fa-times" aria-hidden="true"></i> 取消
                     </button>
                 </div>
             </form>
@@ -2113,115 +2351,124 @@ function getHTML() {
     </div>
 
     <!-- 导出模态框 -->
-    <div id="exportModalOverlay" class="modal-overlay">
+    <div id="exportModalOverlay" class="modal-overlay" role="dialog" aria-labelledby="exportModalTitle" aria-hidden="true">
         <div class="modal">
-            <div class="modal-header">
-                <h2>📤 导出密码数据</h2>
-                <button class="close-btn" onclick="closeExportModal()">&times;</button>
-            </div>
+            <header class="modal-header">
+                <h2 id="exportModalTitle">📤 导出密码数据</h2>
+                <button class="close-btn" onclick="closeExportModal()" type="button" aria-label="关闭对话框">
+                    &times;
+                </button>
+            </header>
             <div class="form-group">
-                <label>选择导出方式</label>
-                <div style="display: flex; gap: 16px; margin-top: 16px;">
-                    <button class="btn btn-secondary" onclick="exportData(false)" style="flex: 1;">
-                        <i class="fas fa-file-export"></i> 普通导出
-                    </button>
-                    <button class="btn btn-primary" onclick="showEncryptedExportForm()" style="flex: 1;">
-                        <i class="fas fa-lock"></i> 加密导出
-                    </button>
-                </div>
+                <fieldset>
+                    <legend>选择导出方式</legend>
+                    <div class="flex gap-4 mt-4">
+                        <button class="btn btn-secondary w-full" onclick="exportData(false)" type="button">
+                            <i class="fas fa-file-export" aria-hidden="true"></i> 普通导出
+                        </button>
+                        <button class="btn btn-primary w-full" onclick="showEncryptedExportForm()" type="button">
+                            <i class="fas fa-lock" aria-hidden="true"></i> 加密导出
+                        </button>
+                    </div>
+                </fieldset>
             </div>
             <div id="encryptedExportForm" class="hidden">
                 <div class="form-group">
                     <label for="exportPassword">🔐 导出密码</label>
-                    <input type="password" id="exportPassword" placeholder="设置导出密码">
+                    <input type="password" id="exportPassword" class="form-control" placeholder="设置导出密码" autocomplete="new-password">
                 </div>
-                <button class="btn btn-primary" onclick="exportData(true)" style="width: 100%;">
-                    <i class="fas fa-download"></i> 加密导出
+                <button class="btn btn-primary w-full" onclick="exportData(true)" type="button">
+                    <i class="fas fa-download" aria-hidden="true"></i> 加密导出
                 </button>
             </div>
         </div>
     </div>
 
     <!-- 导入模态框 -->
-    <div id="importModalOverlay" class="modal-overlay">
+    <div id="importModalOverlay" class="modal-overlay" role="dialog" aria-labelledby="importModalTitle" aria-hidden="true">
         <div class="modal">
-            <div class="modal-header">
-                <h2>📥 导入密码数据</h2>
-                <button class="close-btn" onclick="closeImportModal()">&times;</button>
-            </div>
+            <header class="modal-header">
+                <h2 id="importModalTitle">📥 导入密码数据</h2>
+                <button class="close-btn" onclick="closeImportModal()" type="button" aria-label="关闭对话框">
+                    &times;
+                </button>
+            </header>
             <div class="form-group">
                 <label for="importFile">📁 选择文件</label>
-                <input type="file" id="importFile" accept=".json" onchange="handleFileSelect()">
+                <input type="file" id="importFile" class="form-control" accept=".json" onchange="handleFileSelect()">
             </div>
             <div id="encryptedImportForm" class="hidden">
                 <div class="form-group">
                     <label for="importPassword">🔐 导入密码</label>
-                    <input type="password" id="importPassword" placeholder="输入导入密码">
+                    <input type="password" id="importPassword" class="form-control" placeholder="输入导入密码" autocomplete="off">
                 </div>
             </div>
-            <div style="display: flex; gap: 16px; margin-top: 24px;">
-                <button class="btn btn-primary" onclick="importData()" style="flex: 1;">
-                    <i class="fas fa-upload"></i> 开始导入
+            <div class="flex gap-4 mt-4">
+                <button class="btn btn-primary w-full" onclick="importData()" type="button">
+                    <i class="fas fa-upload" aria-hidden="true"></i> 开始导入
                 </button>
-                <button class="btn btn-secondary" onclick="closeImportModal()">
-                    <i class="fas fa-times"></i> 取消
+                <button class="btn btn-secondary" onclick="closeImportModal()" type="button">
+                    <i class="fas fa-times" aria-hidden="true"></i> 取消
                 </button>
             </div>
         </div>
     </div>
 
     <!-- WebDAV备份模态框 -->
-    <div id="webdavModalOverlay" class="modal-overlay">
+    <div id="webdavModalOverlay" class="modal-overlay" role="dialog" aria-labelledby="webdavModalTitle" aria-hidden="true">
         <div class="modal">
-            <div class="modal-header">
-                <h2>☁️ WebDAV 云备份</h2>
-                <button class="close-btn" onclick="closeWebDAVModal()">&times;</button>
-            </div>
-            <div class="webdav-section">
-                <h4><i class="fas fa-cog"></i> 连接配置</h4>
+            <header class="modal-header">
+                <h2 id="webdavModalTitle">☁️ WebDAV 云备份</h2>
+                <button class="close-btn" onclick="closeWebDAVModal()" type="button" aria-label="关闭对话框">
+                    &times;
+                </button>
+            </header>
+            <section class="webdav-section">
+                <h4><i class="fas fa-cog" aria-hidden="true"></i> 连接配置</h4>
                 <div class="form-group">
                     <label for="webdavUrl">🌐 WebDAV 地址</label>
-                    <input type="url" id="webdavUrl" placeholder="https://dav.example.com/remote.php/dav/files/username/">
+                    <input type="url" id="webdavUrl" class="form-control" placeholder="https://dav.example.com/remote.php/dav/files/username/" autocomplete="url">
                 </div>
                 <div class="form-group">
                     <label for="webdavUsername">👤 用户名</label>
-                    <input type="text" id="webdavUsername" placeholder="WebDAV用户名">
+                    <input type="text" id="webdavUsername" class="form-control" placeholder="WebDAV用户名" autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="webdavPassword">🔑 密码</label>
-                    <input type="password" id="webdavPassword" placeholder="WebDAV密码">
+                    <input type="password" id="webdavPassword" class="form-control" placeholder="WebDAV密码" autocomplete="current-password">
                 </div>
-                <div style="display: flex; gap: 12px; margin-top: 16px;">
-                    <button class="btn btn-primary" onclick="testWebDAVConnection()">
-                        <i class="fas fa-wifi"></i> 测试连接
+                <div class="flex gap-3 mt-4">
+                    <button class="btn btn-primary" onclick="testWebDAVConnection()" type="button">
+                        <i class="fas fa-wifi" aria-hidden="true"></i> 测试连接
                     </button>
-                    <button class="btn btn-secondary" onclick="loadWebDAVFiles()">
-                        <i class="fas fa-list"></i> 列出文件
+                    <button class="btn btn-secondary" onclick="loadWebDAVFiles()" type="button">
+                        <i class="fas fa-list" aria-hidden="true"></i> 列出文件
                     </button>
                 </div>
-            </div>
+            </section>
             
-            <div class="webdav-section">
-                <h4><i class="fas fa-cloud-upload-alt"></i> 备份操作</h4>
+            <section class="webdav-section">
+                <h4><i class="fas fa-cloud-upload-alt" aria-hidden="true"></i> 备份操作</h4>
                 <div class="form-group">
                     <label for="backupFilename">📁 备份文件名</label>
-                    <input type="text" id="backupFilename" placeholder="password-backup-2024-01-01.json">
+                    <input type="text" id="backupFilename" class="form-control" placeholder="password-backup-2024-01-01.json">
                 </div>
-                <button class="btn btn-success" onclick="createWebDAVBackup()" style="width: 100%;">
-                    <i class="fas fa-cloud-upload-alt"></i> 创建备份
+                <button class="btn btn-success w-full" onclick="createWebDAVBackup()" type="button">
+                    <i class="fas fa-cloud-upload-alt" aria-hidden="true"></i> 创建备份
                 </button>
-            </div>
+            </section>
 
-            <div class="webdav-section">
-                <h4><i class="fas fa-history"></i> 备份文件</h4>
-                <div class="backup-files" id="backupFilesList">
-                    <p style="text-align: center; color: #6b7280;">点击"列出文件"查看备份</p>
+            <section class="webdav-section">
+                <h4><i class="fas fa-history" aria-hidden="true"></i> 备份文件</h4>
+                <div class="backup-files" id="backupFilesList" role="list" aria-label="备份文件列表">
+                    <p class="text-center" style="color: #6b7280;">点击"列出文件"查看备份</p>
                 </div>
-            </div>
+            </section>
         </div>
     </div>
 
     <script>
+        // 全局变量
         let authToken = localStorage.getItem('authToken');
         let currentUser = null;
         let passwords = [];
@@ -2243,17 +2490,23 @@ function getHTML() {
             }
         }
 
-        // 初始化
+        // 初始化应用
         document.addEventListener('DOMContentLoaded', function() {
             createParticles();
             
             if (authToken) {
                 verifyAuth();
             } else {
-                showAuthContainer();
+                showAuthSection();
             }
             
-            // 搜索功能
+            // 事件监听器
+            setupEventListeners();
+        });
+
+        // 设置事件监听器
+        function setupEventListeners() {
+            // 搜索和过滤
             document.getElementById('searchInput').addEventListener('input', filterPasswords);
             document.getElementById('categoryFilter').addEventListener('change', filterPasswords);
             
@@ -2264,13 +2517,60 @@ function getHTML() {
             
             // 表单提交
             document.getElementById('passwordForm').addEventListener('submit', handlePasswordSubmit);
-        });
+            
+            // OAuth登录按钮
+            document.getElementById('oauthLoginBtn').addEventListener('click', handleOAuthLogin);
+            
+            // 键盘事件
+            document.addEventListener('keydown', handleKeyboardEvents);
+            
+            // 点击模态框外部关闭
+            document.addEventListener('click', handleModalOutsideClick);
+        }
 
-        // OAuth登录
-        document.getElementById('oauthLoginBtn').addEventListener('click', async function() {
+        // 键盘事件处理
+        function handleKeyboardEvents(e) {
+            if (e.key === 'Escape') {
+                closeAllModals();
+            }
+            
+            // Ctrl+K 快速搜索
+            if (e.ctrlKey && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('searchInput').focus();
+            }
+            
+            // Ctrl+N 添加新密码
+            if (e.ctrlKey && e.key === 'n') {
+                e.preventDefault();
+                if (!document.getElementById('authSection').classList.contains('hidden')) {
+                    return;
+                }
+                showAddModal();
+            }
+        }
+
+        // 模态框外部点击处理
+        function handleModalOutsideClick(e) {
+            if (e.target.classList.contains('modal-overlay')) {
+                closeAllModals();
+            }
+        }
+
+        // 关闭所有模态框
+        function closeAllModals() {
+            closePasswordModal();
+            closeExportModal();
+            closeImportModal();
+            closeWebDAVModal();
+        }
+
+        // OAuth登录处理
+        async function handleOAuthLogin() {
+            const button = document.getElementById('oauthLoginBtn');
             try {
-                this.innerHTML = '<div class="loading"></div> 正在跳转...';
-                this.disabled = true;
+                button.innerHTML = '<div class="loading"></div> 正在跳转...';
+                button.disabled = true;
                 
                 const response = await fetch('/api/oauth/login', {
                     method: 'GET'
@@ -2280,10 +2580,10 @@ function getHTML() {
                 window.location.href = data.authUrl;
             } catch (error) {
                 showNotification('登录失败', 'error');
-                this.innerHTML = '<i class="fas fa-sign-in-alt"></i> 开始使用 OAuth 登录';
-                this.disabled = false;
+                button.innerHTML = '<i class="fas fa-sign-in-alt"></i> 开始使用 OAuth 登录';
+                button.disabled = false;
             }
-        });
+        }
 
         // 验证登录状态
         async function verifyAuth() {
@@ -2298,28 +2598,28 @@ function getHTML() {
                 
                 if (data.authenticated) {
                     currentUser = data.user;
-                    showMainContainer();
+                    showMainApp();
                     loadData();
                 } else {
                     localStorage.removeItem('authToken');
                     authToken = null;
-                    showAuthContainer();
+                    showAuthSection();
                 }
             } catch (error) {
                 console.error('Auth verification failed:', error);
-                showAuthContainer();
+                showAuthSection();
             }
         }
 
         // 显示界面
-        function showAuthContainer() {
-            document.getElementById('authContainer').classList.remove('hidden');
-            document.getElementById('mainContainer').classList.add('hidden');
+        function showAuthSection() {
+            document.getElementById('authSection').classList.remove('hidden');
+            document.getElementById('mainApp').classList.add('hidden');
         }
 
-        function showMainContainer() {
-            document.getElementById('authContainer').classList.add('hidden');
-            document.getElementById('mainContainer').classList.remove('hidden');
+        function showMainApp() {
+            document.getElementById('authSection').classList.add('hidden');
+            document.getElementById('mainApp').classList.remove('hidden');
             
             // 更新用户信息
             if (currentUser) {
@@ -2396,9 +2696,9 @@ function getHTML() {
         function renderCategoryTags() {
             const container = document.getElementById('categoryTags');
             container.innerHTML = categories.map(category => \`
-                <div class="category-tag">
+                <div class="category-tag" role="listitem">
                     \${category}
-                    <span class="remove" onclick="removeCategory('\${category}')">×</span>
+                    <span class="remove" onclick="removeCategory('\${category}')" role="button" tabindex="0" aria-label="删除分类 \${category}">×</span>
                 </div>
             \`).join('');
         }
@@ -2464,7 +2764,7 @@ function getHTML() {
             if (filteredPasswords.length === 0) {
                 grid.innerHTML = \`
                     <div class="empty-state">
-                        <i class="fas fa-key"></i>
+                        <div class="icon" aria-hidden="true">🔑</div>
                         <h3>还没有保存的密码</h3>
                         <p>点击"添加密码"开始管理您的密码吧！</p>
                     </div>
@@ -2473,16 +2773,16 @@ function getHTML() {
             }
             
             grid.innerHTML = filteredPasswords.map(password => \`
-                <div class="password-card">
-                    <div class="password-header">
-                        <div class="site-icon">
+                <article class="password-card" role="article" aria-labelledby="pwd-title-\${password.id}">
+                    <header class="password-header">
+                        <div class="site-icon" aria-hidden="true">
                             <i class="fas fa-globe"></i>
                         </div>
-                        <div class="password-info">
-                            <h3>\${password.siteName}</h3>
-                            \${password.category ? \`<span class="category">\${password.category}</span>\` : ''}
+                        <div class="password-meta">
+                            <h3 id="pwd-title-\${password.id}">\${password.siteName}</h3>
+                            \${password.category ? \`<span class="category-badge">\${password.category}</span>\` : ''}
                         </div>
-                    </div>
+                    </header>
                     
                     <div class="password-field">
                         <label>👤 用户名</label>
@@ -2491,13 +2791,13 @@ function getHTML() {
                     
                     <div class="password-field">
                         <label>🔑 密码</label>
-                        <div class="value" id="pwd-\${password.id}">••••••••</div>
+                        <div class="value" id="pwd-\${password.id}" aria-label="密码已隐藏">••••••••</div>
                     </div>
                     
                     \${password.url ? \`
                         <div class="password-field">
                             <label>🔗 网址</label>
-                            <div class="value"><a href="\${password.url}" target="_blank">\${password.url}</a></div>
+                            <div class="value"><a href="\${password.url}" target="_blank" rel="noopener noreferrer">\${password.url}</a></div>
                         </div>
                     \` : ''}
                     
@@ -2508,21 +2808,21 @@ function getHTML() {
                         </div>
                     \` : ''}
                     
-                    <div class="password-actions">
-                        <button class="btn btn-secondary" onclick="togglePasswordDisplay('\${password.id}')">
-                            <i class="fas fa-eye"></i>
+                    <footer class="password-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="togglePasswordDisplay('\${password.id}')" type="button" aria-label="显示密码">
+                            <i class="fas fa-eye" aria-hidden="true"></i>
                         </button>
-                        <button class="btn btn-secondary" onclick="copyPassword('\${password.id}')">
-                            <i class="fas fa-copy"></i>
+                        <button class="btn btn-secondary btn-sm" onclick="copyPassword('\${password.id}')" type="button" aria-label="复制密码">
+                            <i class="fas fa-copy" aria-hidden="true"></i>
                         </button>
-                        <button class="btn btn-secondary" onclick="editPassword('\${password.id}')">
-                            <i class="fas fa-edit"></i>
+                        <button class="btn btn-secondary btn-sm" onclick="editPassword('\${password.id}')" type="button" aria-label="编辑密码">
+                            <i class="fas fa-edit" aria-hidden="true"></i>
                         </button>
-                        <button class="btn btn-danger" onclick="deletePassword('\${password.id}')">
-                            <i class="fas fa-trash"></i>
+                        <button class="btn btn-danger btn-sm" onclick="deletePassword('\${password.id}')" type="button" aria-label="删除密码">
+                            <i class="fas fa-trash" aria-hidden="true"></i>
                         </button>
-                    </div>
-                </div>
+                    </footer>
+                </article>
             \`).join('');
         }
 
@@ -2559,13 +2859,17 @@ function getHTML() {
                     
                     const data = await response.json();
                     element.textContent = data.password;
-                    button.innerHTML = '<i class="fas fa-eye-slash"></i>';
+                    element.setAttribute('aria-label', '密码已显示');
+                    button.innerHTML = '<i class="fas fa-eye-slash" aria-hidden="true"></i>';
+                    button.setAttribute('aria-label', '隐藏密码');
                 } catch (error) {
                     showNotification('获取密码失败', 'error');
                 }
             } else {
                 element.textContent = '••••••••';
-                button.innerHTML = '<i class="fas fa-eye"></i>';
+                element.setAttribute('aria-label', '密码已隐藏');
+                button.innerHTML = '<i class="fas fa-eye" aria-hidden="true"></i>';
+                button.setAttribute('aria-label', '显示密码');
             }
         }
 
@@ -2637,44 +2941,62 @@ function getHTML() {
         }
 
         function showPasswordModal() {
-            document.getElementById('passwordModalOverlay').classList.add('show');
+            const modal = document.getElementById('passwordModalOverlay');
+            modal.classList.add('show');
+            modal.setAttribute('aria-hidden', 'false');
+            document.getElementById('siteName').focus();
         }
 
         function closePasswordModal() {
-            document.getElementById('passwordModalOverlay').classList.remove('show');
+            const modal = document.getElementById('passwordModalOverlay');
+            modal.classList.remove('show');
+            modal.setAttribute('aria-hidden', 'true');
             document.getElementById('passwordForm').reset();
             editingPasswordId = null;
         }
 
         function showExportModal() {
-            document.getElementById('exportModalOverlay').classList.add('show');
+            const modal = document.getElementById('exportModalOverlay');
+            modal.classList.add('show');
+            modal.setAttribute('aria-hidden', 'false');
             document.getElementById('encryptedExportForm').classList.add('hidden');
         }
 
         function closeExportModal() {
-            document.getElementById('exportModalOverlay').classList.remove('show');
+            const modal = document.getElementById('exportModalOverlay');
+            modal.classList.remove('show');
+            modal.setAttribute('aria-hidden', 'true');
         }
 
         function showEncryptedExportForm() {
             document.getElementById('encryptedExportForm').classList.remove('hidden');
+            document.getElementById('exportPassword').focus();
         }
 
         function showImportModal() {
-            document.getElementById('importModalOverlay').classList.add('show');
+            const modal = document.getElementById('importModalOverlay');
+            modal.classList.add('show');
+            modal.setAttribute('aria-hidden', 'false');
         }
 
         function closeImportModal() {
-            document.getElementById('importModalOverlay').classList.remove('show');
+            const modal = document.getElementById('importModalOverlay');
+            modal.classList.remove('show');
+            modal.setAttribute('aria-hidden', 'true');
             document.getElementById('importFile').value = '';
             selectedFile = null;
         }
 
         function showWebDAVModal() {
-            document.getElementById('webdavModalOverlay').classList.add('show');
+            const modal = document.getElementById('webdavModalOverlay');
+            modal.classList.add('show');
+            modal.setAttribute('aria-hidden', 'false');
         }
 
         function closeWebDAVModal() {
-            document.getElementById('webdavModalOverlay').classList.remove('show');
+            const modal = document.getElementById('webdavModalOverlay');
+            modal.classList.remove('show');
+            modal.setAttribute('aria-hidden', 'true');
         }
 
         // 处理密码表单提交
@@ -2752,9 +3074,11 @@ function getHTML() {
             if (field.type === 'password') {
                 field.type = 'text';
                 icon.className = 'fas fa-eye-slash';
+                button.setAttribute('aria-label', '隐藏密码');
             } else {
                 field.type = 'password';
                 icon.className = 'fas fa-eye';
+                button.setAttribute('aria-label', '显示密码');
             }
         }
 
@@ -3041,19 +3365,19 @@ function getHTML() {
             const container = document.getElementById('backupFilesList');
             
             if (files.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: #6b7280;">没有找到备份文件</p>';
+                container.innerHTML = '<p class="text-center" style="color: #6b7280;">没有找到备份文件</p>';
                 return;
             }
             
             container.innerHTML = files.map(file => \`
-                <div class="backup-file">
+                <div class="backup-file" role="listitem">
                     <span>📁 \${file}</span>
-                    <div>
-                        <button class="btn btn-success" onclick="restoreWebDAVBackup('\${file}')" style="padding: 4px 8px; font-size: 12px; margin-right: 8px;">
-                            <i class="fas fa-download"></i> 恢复
+                    <div class="backup-file-actions">
+                        <button class="btn btn-success btn-sm" onclick="restoreWebDAVBackup('\${file}')" type="button">
+                            <i class="fas fa-download" aria-hidden="true"></i> 恢复
                         </button>
-                        <button class="btn btn-danger" onclick="deleteWebDAVBackup('\${file}')" style="padding: 4px 8px; font-size: 12px;">
-                            <i class="fas fa-trash"></i> 删除
+                        <button class="btn btn-danger btn-sm" onclick="deleteWebDAVBackup('\${file}')" type="button">
+                            <i class="fas fa-trash" aria-hidden="true"></i> 删除
                         </button>
                     </div>
                 </div>
@@ -3076,31 +3400,36 @@ function getHTML() {
             localStorage.removeItem('authToken');
             authToken = null;
             currentUser = null;
-            showAuthContainer();
+            showAuthSection();
         }
 
         // 显示通知
         function showNotification(message, type = 'success') {
             const notification = document.createElement('div');
             notification.className = \`notification \${type}\`;
+            notification.setAttribute('role', 'alert');
+            notification.setAttribute('aria-live', 'polite');
             
             const icons = {
                 success: 'check-circle',
                 error: 'exclamation-triangle',
-                warning: 'exclamation-circle'
+                warning: 'exclamation-circle',
+                info: 'info-circle'
             };
             
             notification.innerHTML = \`
-                <i class="fas fa-\${icons[type] || icons.success}"></i>
+                <i class="fas fa-\${icons[type] || icons.success}" aria-hidden="true"></i>
                 \${message}
             \`;
             
             document.body.appendChild(notification);
             
+            // 显示动画
             setTimeout(() => {
                 notification.classList.add('show');
             }, 100);
             
+            // 自动隐藏
             setTimeout(() => {
                 notification.classList.remove('show');
                 setTimeout(() => {
@@ -3110,26 +3439,6 @@ function getHTML() {
                 }, 300);
             }, 3000);
         }
-
-        // 点击模态框外部关闭
-        document.addEventListener('click', function(e) {
-            if (e.target.classList.contains('modal-overlay')) {
-                if (e.target.id === 'passwordModalOverlay') closePasswordModal();
-                if (e.target.id === 'exportModalOverlay') closeExportModal();
-                if (e.target.id === 'importModalOverlay') closeImportModal();
-                if (e.target.id === 'webdavModalOverlay') closeWebDAVModal();
-            }
-        });
-
-        // ESC键关闭模态框
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                closePasswordModal();
-                closeExportModal();
-                closeImportModal();
-                closeWebDAVModal();
-            }
-        });
     </script>
 </body>
 </html>`;
