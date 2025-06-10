@@ -66,7 +66,7 @@ export default {
         return handleWebDAV(request, env, corsHeaders);
       }
       
-      // 登录检测和保存API
+      // 登录检测和保存API - 改进版本
       if (path === '/api/detect-login') {
         return handleDetectLogin(request, env, corsHeaders);
       }
@@ -76,9 +76,14 @@ export default {
         return handleAutoFill(request, env, corsHeaders);
       }
       
-      // 新增：账户去重检查API
+      // 账户去重检查API
       if (path === '/api/check-duplicate') {
         return handleCheckDuplicate(request, env, corsHeaders);
+      }
+      
+      // 新增：获取用户信息API
+      if (path === '/api/user') {
+        return handleGetUser(request, env, corsHeaders);
       }
       
       return new Response('Not Found', { status: 404, headers: corsHeaders });
@@ -164,6 +169,63 @@ async function handleOAuthCallback(request, env, corsHeaders) {
     
     const userData = await userResponse.json();
     
+    // 检查用户授权 - 新增功能
+    if (env.OAUTH_ID && userData.id.toString() !== env.OAUTH_ID) {
+      return new Response(`
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+          <head>
+            <meta charset="UTF-8">
+            <title>访问被拒绝</title>
+            <style>
+              body { 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                display: flex; 
+                justify-content: center; 
+                align-items: center; 
+                height: 100vh; 
+                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                margin: 0;
+              }
+              .message { 
+                background: white; 
+                padding: 30px; 
+                border-radius: 15px; 
+                text-align: center;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+                max-width: 400px;
+              }
+              h3 { color: #ef4444; margin-bottom: 15px; }
+              p { color: #6b7280; margin-bottom: 20px; }
+              .user-info { 
+                background: #f8fafc; 
+                padding: 15px; 
+                border-radius: 8px; 
+                margin: 15px 0;
+                font-family: monospace;
+                font-size: 14px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="message">
+              <h3>🚫 访问被拒绝</h3>
+              <p>抱歉，您没有访问此密码管理器的权限。</p>
+              <div class="user-info">
+                用户ID: ${userData.id}<br>
+                用户名: ${userData.username}<br>
+                授权ID: ${env.OAUTH_ID || '未设置'}
+              </div>
+              <p style="font-size: 12px;">如需访问权限，请联系管理员。</p>
+            </div>
+          </body>
+        </html>
+      `, {
+        status: 403,
+        headers: { 'Content-Type': 'text/html', ...corsHeaders }
+      });
+    }
+    
     const sessionToken = generateRandomString(64);
     const userSession = {
       userId: userData.id.toString(),
@@ -239,15 +301,48 @@ async function handleAuthVerify(request, env, corsHeaders) {
   const session = await env.PASSWORD_KV.get(`session_${token}`);
   
   if (session) {
+    const userData = JSON.parse(session);
+    
+    // 检查用户授权
+    if (env.OAUTH_ID && userData.userId !== env.OAUTH_ID) {
+      return new Response(JSON.stringify({ 
+        authenticated: false,
+        error: 'Unauthorized user'
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
     return new Response(JSON.stringify({ 
       authenticated: true, 
-      user: JSON.parse(session) 
+      user: userData 
     }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
   }
   
   return new Response(JSON.stringify({ authenticated: false }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders }
+  });
+}
+
+// 新增：获取用户信息API
+async function handleGetUser(request, env, corsHeaders) {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: '未授权' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  
+  return new Response(JSON.stringify({
+    id: session.userId,
+    username: session.username,
+    nickname: session.nickname,
+    email: session.email,
+    avatar: session.avatar
+  }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders }
   });
 }
@@ -415,8 +510,8 @@ async function handlePasswords(request, env, corsHeaders) {
   }
 }
 
-// 检查重复账户 - 新增函数
-async function checkForDuplicates(newPassword, userId, env) {
+// 检查重复账户 - 改进版本：只检查完全相同的账户（URL+用户名+密码）
+async function checkForDuplicates(newPassword, userId, env, checkPassword = false) {
   if (!newPassword.url || !newPassword.username) {
     return { isDuplicate: false };
   }
@@ -446,13 +541,41 @@ async function checkForDuplicates(newPassword, userId, env) {
             
             // 检查域名和用户名是否完全匹配
             if (existingDomain === newDomain && existingUsername === newUsername) {
-              return {
-                isDuplicate: true,
-                existing: {
-                  ...existingPassword,
-                  password: '••••••••' // 不返回真实密码
+              // 如果需要检查密码，则解密比较
+              if (checkPassword && newPassword.password) {
+                const existingDecryptedPassword = await decryptPassword(existingPassword.password, userId);
+                if (existingDecryptedPassword === newPassword.password) {
+                  // 完全相同的账户（URL+用户名+密码）
+                  return {
+                    isDuplicate: true,
+                    isIdentical: true,
+                    existing: {
+                      ...existingPassword,
+                      password: existingDecryptedPassword
+                    }
+                  };
+                } else {
+                  // 相同网站和用户名，但密码不同
+                  return {
+                    isDuplicate: true,
+                    isIdentical: false,
+                    passwordChanged: true,
+                    existing: {
+                      ...existingPassword,
+                      password: existingDecryptedPassword
+                    }
+                  };
                 }
-              };
+              } else {
+                // 不检查密码时，只要URL和用户名匹配就算重复
+                return {
+                  isDuplicate: true,
+                  existing: {
+                    ...existingPassword,
+                    password: '••••••••' // 不返回真实密码
+                  }
+                };
+              }
             }
           } catch (e) {
             // URL解析失败，跳过此条记录
@@ -469,7 +592,7 @@ async function checkForDuplicates(newPassword, userId, env) {
   }
 }
 
-// 新增：检查重复API
+// 账户去重检查API
 async function handleCheckDuplicate(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -482,7 +605,7 @@ async function handleCheckDuplicate(request, env, corsHeaders) {
   const data = await request.json();
   const userId = session.userId;
   
-  const duplicateCheck = await checkForDuplicates(data, userId, env);
+  const duplicateCheck = await checkForDuplicates(data, userId, env, false);
   
   return new Response(JSON.stringify(duplicateCheck), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -950,9 +1073,19 @@ async function handleWebDAVRestore(request, env, corsHeaders, session) {
     
     let imported = 0;
     let errors = 0;
+    let duplicates = 0;
     
     for (const passwordData of backupData.passwords || []) {
       try {
+        // 检查是否存在重复（包括密码检查）
+        const duplicateCheck = await checkForDuplicates(passwordData, userId, env, true);
+        
+        if (duplicateCheck.isDuplicate && duplicateCheck.isIdentical) {
+          // 完全相同的记录，跳过
+          duplicates++;
+          continue;
+        }
+        
         const newPassword = {
           ...passwordData,
           id: generateId(),
@@ -974,7 +1107,8 @@ async function handleWebDAVRestore(request, env, corsHeaders, session) {
       success: true, 
       imported, 
       errors,
-      message: `恢复完成：成功 ${imported} 条，失败 ${errors} 条`
+      duplicates,
+      message: `恢复完成：成功 ${imported} 条，跳过重复 ${duplicates} 条，失败 ${errors} 条`
     }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
@@ -1095,7 +1229,7 @@ async function handleWebDAVList(request, env, corsHeaders, session) {
   }
 }
 
-// 登录检测API - 改进版本，包含重复检查
+// 登录检测API - 改进版本，智能处理重复和密码变更
 async function handleDetectLogin(request, env, corsHeaders) {
   const session = await verifySession(request, env);
   if (!session) {
@@ -1112,17 +1246,34 @@ async function handleDetectLogin(request, env, corsHeaders) {
     const domain = urlObj.hostname.replace('www.', '');
     const userId = session.userId;
     
-    // 检查是否已存在该域名和用户名的密码
-    const duplicateCheck = await checkForDuplicates({ url, username }, userId, env);
+    // 检查是否已存在该域名和用户名的密码（包括密码检查）
+    const duplicateCheck = await checkForDuplicates({ url, username, password }, userId, env, true);
     
     if (duplicateCheck.isDuplicate) {
-      return new Response(JSON.stringify({ 
-        exists: true, 
-        password: duplicateCheck.existing,
-        message: `该网站已存在相同用户名的账户：${duplicateCheck.existing.siteName} - ${duplicateCheck.existing.username}`
-      }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      if (duplicateCheck.isIdentical) {
+        // 完全相同的账户，不保存
+        return new Response(JSON.stringify({ 
+          exists: true,
+          identical: true,
+          password: duplicateCheck.existing,
+          message: `账户已存在且密码相同：${duplicateCheck.existing.siteName} - ${duplicateCheck.existing.username}`
+        }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } else if (duplicateCheck.passwordChanged) {
+        // 相同网站和用户名，但密码不同 - 询问是否更新
+        return new Response(JSON.stringify({ 
+          exists: true,
+          passwordChanged: true,
+          existing: duplicateCheck.existing,
+          newPassword: password,
+          message: `检测到密码变更，是否更新保存的密码？`,
+          updateAction: 'update_password'
+        }), {
+          status: 200, // 不是错误，而是需要用户确认
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
     }
     
     // 如果不存在重复，创建新的密码条目
@@ -1285,7 +1436,16 @@ async function verifySession(request, env) {
   if (!token) return null;
   
   const session = await env.PASSWORD_KV.get(`session_${token}`);
-  return session ? JSON.parse(session) : null;
+  if (!session) return null;
+  
+  const userData = JSON.parse(session);
+  
+  // 检查用户授权
+  if (env.OAUTH_ID && userData.userId !== env.OAUTH_ID) {
+    return null;
+  }
+  
+  return userData;
 }
 
 async function encryptPassword(password, userId) {
@@ -1390,7 +1550,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// HTML5界面 - 添加重复检查提示
+// HTML5界面 - 保持原有界面不变
 function getHTML5() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
