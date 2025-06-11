@@ -1,18 +1,18 @@
 // ==UserScript==
-// @name         智能密码管理助手 Pro - 优化版
-// @namespace    https://pass.pages.dev/
-// @version      2.2.0
-// @description  自动检测和填充密码，支持多账户切换、密码变更检测和历史记录管理。优化API调用频率，减少KV读取操作。只在检测到登录框时显示图标和进行连接。
-// @author       Password Manager Pro
-// @match        *://*/*
-// @grant        GM_xmlhttpRequest
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_addStyle
-// @grant        GM_registerMenuCommand
-// @grant        GM_setClipboard
-// @run-at       document-end
-// @icon         data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACdUlEQVR4nF2TPWtcVxCGnzn3Siuhj0iOVMgLLiT8A+yg1HaXbZIqaVIIUijgLsHg36DG6QRhsQuXSWEMwYka24XTCNJZARGIYuGNEkVeRbY+9u45Z14X98oYD0wzzDsf58xjAAIzEMB/sAysDuHaANoJcOhleHIG3WXYfFdjAgP4DcpFWANuGLSOgQEQ62QCcArVANafwa2vIQkwQQGE/+HBjFmnV4tyMgtJsigRQ1ACT1IxLbEPv3wAn/4JHgxyH9ZmoPO3NMySXCqSu2UJD4Hsbsm9yJL2YTgNn/wLa19AtkO4arA5BOL4eMjj41YdHWGLiwz29zk7OqJot9HkJK+2t4kgmXmUrIJlXsLdQVlqF9LhzZvK/b5SrydJqp4/1+unT3VuBw8faqPV0k9macNMP8Ld4HD9tH7pwNgYYXaWwzt3eLG6yuilS7QuX+b3lRUO7t/nw06HqStXqKQwCIEM14PDQlUXMJdA4mB9nb1ul9zvc7q1xV/37tHrdpE7IxcvksGiGRkWQq7F5Oa7AGxuDsoS5UyYmKAoSzQ6ipmhWog3HjLsGZBAAjDDcyanBCEgiZQSrvp0mmaiLrAXMjwu66Cfr5CbiXAH6W03JNTkhjr2yP6Aq4XZZiXhFy4E5uftZGeH4XBIubREjJFXu7vY5CRlu83rXk+D42PPZiTpYwPYgttz8M0LGEYYcbAEVPVq5OakK1CCOA2jB/DdV/Ct/QDF5xCewYMps84/ZkT3HCHkECwC0V3JzJNZMSHxUvp5AJ/NgltDFd9D+RGsCW4ArZNmgnOYAM6girB+/C5M7+P8Kyx7g3PV4JwbnCvofvkezm8AGhhzCI1do8sAAAAASUVORK5CYII=
+// @name          智能密码管理助手 Pro - Material-UI完全修复版
+// @namespace     https://pass.pages.dev/
+// @version       2.5.0
+// @description   自动检测和填充密码，支持多账户切换、密码变更检测和历史记录管理。完全修复Material-UI受控组件填充问题。
+// @author        Password Manager Pro
+// @match         *://*/*
+// @grant         GM_xmlhttpRequest
+// @grant         GM_setValue
+// @grant         GM_getValue
+// @grant         GM_addStyle
+// @grant         GM_registerMenuCommand
+// @grant         GM_setClipboard
+// @run-at        document-end
+// @icon          data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACdUlEQVR4nF2TPWtcVxCGnzn3Siuhj0iOVMgLLiT8A+yg1HaXbZIqaVIIUijgLsHg36DG6QRhsQuXSWEMwYka24XTCNJZARGIYuGNEkVeRbY+9u45Z14X98oYD0wzzDsf58xjAAIzEMB/sAysDuHaANoJcOhleHIG3WXYfFdjAgP4DcpFWANuGLSOgQEQ62QCcArVANafwa2vIQkwQQGE/+HBjFmnV4tyMgtJsigRQ1ACT1IxLbEPf3wAn/4JHgxyH9ZmoPO3NMySXCqSu2UJD4Hsbsm9yJL2YTgNn/wBa19AtkO4arA5BOL4eMjj41YdHWGLiwz29zk7OqJot9HkJK+2t4kgmXmUrIJlXsLdQVlqF9LhzZvK/b5SrydJqp4/1+unT3VuBw8faqPV0k9macNMP8Ld4HD9tH7pwNgYYXaWwzt3eLG6yuilS7QuX+b3lRUO7t/nw06HqSpXqKQwCIEM14PDQlUXMJdA4mB9nb1ul9zvc7q1xV/37tHrdpE7IxcvksGiGRkWQq7F5Oa7AGxuDsoS5UyYmKAoSzQ6ipmhWog3HjLsGZBAAjDDcyanBCEgiZQSrvp0mmaiLrAXMjwu66Cfr5CbiXAH6W03JNTkhjr2yP6Aq4XZZiXhFy4E5uftZGeH4XBIubREjJFXu7vY5CRlu83rXk+D42PPZiTpYwPYgttz8M0LGEYYcbAEVPVq5OakK1CCOA2jB/DdV/Ct/QDF5xCewYMps4/ZkT3HCHkECwC0V3JzJNZMSHxUvp5AJ/NgltDFd9D+RGsCW4ArZNmgnOYAM6girB+/C5M7+P8Kyx7g3PV4JwbnCvofvkezm8AGhhzCI1do8sAAAAASUVORK5CYII=
 // ==/UserScript==
 
 (function() {
@@ -269,29 +269,29 @@
                     </div>
                     <div class="pm-modal-body">
                         ${history.length === 0 ?
-                          '<p class="pm-text-center">暂无历史记录</p>' :
-                          history.map((entry, index) => `
-                            <div class="pm-history-item">
-                                <div class="pm-history-header">
-                                    <span class="pm-history-date">${new Date(entry.changedAt).toLocaleString()}</span>
-                                    <div class="pm-history-actions">
-                                        <button type="button" class="pm-btn pm-btn-success pm-btn-sm pm-btn-restore" data-password-id="${entry.passwordId || passwordId}" data-history-id="${entry.id}" title="恢复此密码">
-                                            🔄 恢复此密码
-                                        </button>
-                                        <button type="button" class="pm-btn pm-btn-danger pm-btn-sm pm-btn-delete-history" data-password-id="${entry.passwordId || passwordId}" data-history-id="${entry.id}" title="删除此历史记录">
-                                            🗑️ 删除
+                            '<p class="pm-text-center">暂无历史记录</p>' :
+                            history.map((entry, index) => `
+                                <div class="pm-history-item">
+                                    <div class="pm-history-header">
+                                        <span class="pm-history-date">${new Date(entry.changedAt).toLocaleString()}</span>
+                                        <div class="pm-history-actions">
+                                            <button type="button" class="pm-btn pm-btn-success pm-btn-sm pm-btn-restore" data-password-id="${entry.passwordId || passwordId}" data-history-id="${entry.id}" title="恢复此密码">
+                                                🔄 恢复此密码
+                                            </button>
+                                            <button type="button" class="pm-btn pm-btn-danger pm-btn-sm pm-btn-delete-history" data-password-id="${entry.passwordId || passwordId}" data-history-id="${entry.id}" title="删除此历史记录">
+                                                🗑️ 删除
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="pm-history-password">
+                                        <label>密码：</label>
+                                        <span class="pm-password-value" id="historyPwd${index}">••••••••</span>
+                                        <button type="button" class="pm-btn pm-btn-sm pm-btn-secondary pm-btn-toggle-history-pwd" data-element-id="historyPwd${index}" data-password="${escapeHtml(entry.oldPassword)}">
+                                            <i class="fas fa-eye"></i>
                                         </button>
                                     </div>
                                 </div>
-                                <div class="pm-history-password">
-                                    <label>密码：</label>
-                                    <span class="pm-password-value" id="historyPwd${index}">••••••••</span>
-                                    <button type="button" class="pm-btn pm-btn-sm pm-btn-secondary pm-btn-toggle-history-pwd" data-element-id="historyPwd${index}" data-password="${escapeHtml(entry.oldPassword)}">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                </div>
-                            </div>
-                          `).join('')
+                            `).join('')
                         }
                     </div>
                 </div>
@@ -380,8 +380,8 @@
         });
     }
 
-    // 主要填充函数
-    function fillPassword(passwordData) {
+    // 主要填充函数 - 修复async问题
+    async function fillPassword(passwordData) {
         console.log('🔐 开始填充密码流程:', passwordData);
 
         try {
@@ -406,13 +406,28 @@
                 hasPassword: !!password
             });
 
-            // 查找字段
-            const usernameFields = findAllUsernameFields();
-            const passwordFields = findAllPasswordFields();
+            // 使用更精确的字段查找
+            const usernameFields = findUsernameFieldsAdvanced();
+            const passwordFields = findPasswordFieldsAdvanced();
 
             console.log('🔍 找到字段:', {
                 usernameFields: usernameFields.length,
-                passwordFields: passwordFields.length
+                passwordFields: passwordFields.length,
+                usernameFieldsDetails: usernameFields.map(f => ({
+                    tag: f.tagName,
+                    type: f.type,
+                    name: f.name,
+                    id: f.id,
+                    className: f.className,
+                    placeholder: f.placeholder
+                })),
+                passwordFieldsDetails: passwordFields.map(f => ({
+                    tag: f.tagName,
+                    type: f.type,
+                    name: f.name,
+                    id: f.id,
+                    className: f.className
+                }))
             });
 
             if (usernameFields.length === 0 && passwordFields.length === 0) {
@@ -425,28 +440,36 @@
 
             // 填充用户名字段
             if (usernameFields.length > 0 && username) {
-                usernameFields.forEach((field, index) => {
-                    try {
-                        if (fillInputField(field, username, '用户名')) {
-                            filledFields++;
-                        }
-                    } catch (error) {
-                        console.error(`❌ 用户名字段 ${index + 1} 填充异常:`, error);
+                console.log('🔐 开始填充用户名字段...');
+                for (let i = 0; i < usernameFields.length; i++) {
+                    const field = usernameFields[i];
+                    console.log(`🔐 尝试填充用户名字段 ${i + 1}:`, field);
+
+                    const success = await fillInputFieldAdvanced(field, username, '用户名');
+                    if (success) {
+                        filledFields++;
+                        console.log(`✅ 用户名字段 ${i + 1} 填充成功`);
+                    } else {
+                        console.log(`❌ 用户名字段 ${i + 1} 填充失败`);
                     }
-                });
+                }
             }
 
             // 填充密码字段
             if (passwordFields.length > 0 && password) {
-                passwordFields.forEach((field, index) => {
-                    try {
-                        if (fillInputField(field, password, '密码')) {
-                            filledFields++;
-                        }
-                    } catch (error) {
-                        console.error(`❌ 密码字段 ${index + 1} 填充异常:`, error);
+                console.log('🔐 开始填充密码字段...');
+                for (let i = 0; i < passwordFields.length; i++) {
+                    const field = passwordFields[i];
+                    console.log(`🔐 尝试填充密码字段 ${i + 1}:`, field);
+
+                    const success = await fillInputFieldAdvanced(field, password, '密码');
+                    if (success) {
+                        filledFields++;
+                        console.log(`✅ 密码字段 ${i + 1} 填充成功`);
+                    } else {
+                        console.log(`❌ 密码字段 ${i + 1} 填充失败`);
                     }
-                });
+                }
             }
 
             // 显示结果
@@ -580,141 +603,419 @@
         return isPasswordManagerSite;
     }
 
-    // 改进的字段填充函数
-    function fillInputField(field, value, fieldType) {
-        if (!field || !value) {
-            return false;
-        }
-
-        try {
-            if (!isElementVisible(field) || field.disabled || field.readOnly) {
-                return false;
-            }
-
-            const oldValue = field.value;
-
-            field.focus();
-            field.value = '';
-            field.value = value;
-
-            try {
-                const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-                if (descriptor && descriptor.set) {
-                    descriptor.set.call(field, value);
-                }
-            } catch (e) {
-                console.log(`⚠️ ${fieldType}字段原生setter失败:`, e);
-            }
-
-            triggerInputEvents(field, value);
-
-            const finalValue = field.value;
-            if (finalValue === value) {
-                field.style.backgroundColor = '#dcfce7';
-                field.style.borderColor = '#10b981';
-                setTimeout(() => {
-                    field.style.backgroundColor = '';
-                    field.style.borderColor = '';
-                }, 2000);
-                return true;
-            }
-            return false;
-
-        } catch (error) {
-            console.error(`❌ 填充${fieldType}字段时发生异常:`, error);
-            return false;
-        } finally {
-            setTimeout(() => {
-                try {
-                    field.blur();
-                } catch (e) {
-                    console.warn('移除焦点失败:', e);
-                }
-            }, 200);
-        }
-    }
-
-    // 触发输入事件
-    function triggerInputEvents(field, value) {
-        const events = [
-            { type: 'focus', event: new FocusEvent('focus', { bubbles: true }) },
-            { type: 'input', event: new InputEvent('input', { bubbles: true, data: value }) },
-            { type: 'change', event: new Event('change', { bubbles: true }) },
-            { type: 'keydown', event: new KeyboardEvent('keydown', { bubbles: true }) },
-            { type: 'keyup', event: new KeyboardEvent('keyup', { bubbles: true }) }
-        ];
-
-        events.forEach(({ type, event }) => {
-            try {
-                field.dispatchEvent(event);
-            } catch (e) {
-                console.warn(`❌ 触发${type}事件失败:`, e);
-            }
-        });
-
-        try {
-            if (field._valueTracker) {
-                field._valueTracker.setValue('');
-            }
-        } catch (e) {
-            console.warn('React特殊处理失败:', e);
-        }
-    }
-
-    // 查找用户名字段
-    function findAllUsernameFields() {
-        const selectors = [
-            'input[type="text"]',
-            'input[type="email"]',
-            'input[type="tel"]',
-            'input:not([type])',
-            'input[name*="user" i]',
-            'input[name*="email" i]',
-            'input[name*="login" i]',
-            'input[name*="account" i]',
-            'input[name*="username" i]',
-            'input[id*="user" i]',
-            'input[id*="email" i]',
-            'input[id*="login" i]',
-            'input[id*="account" i]',
-            'input[id*="username" i]',
-            'input[placeholder*="用户" i]',
-            'input[placeholder*="邮箱" i]',
-            'input[placeholder*="email" i]',
-            'input[placeholder*="username" i]',
-            'input[placeholder*="账号" i]',
-            'input[placeholder*="手机" i]',
-            'input[placeholder*="phone" i]',
-            'input[autocomplete="username"]',
-            'input[autocomplete="email"]'
-        ];
-
+    // 高级用户名字段查找 - 完全重写
+    function findUsernameFieldsAdvanced() {
         const fields = new Set();
 
-        selectors.forEach(selector => {
-            try {
-                document.querySelectorAll(selector).forEach(field => {
-                    if (field.type !== 'password' &&
-                        field.type !== 'hidden' &&
-                        field.type !== 'submit' &&
-                        field.type !== 'button' &&
-                        isElementVisible(field)) {
-                        fields.add(field);
+        // 1. 直接查找所有可能的input元素
+        const allInputs = document.querySelectorAll('input');
+
+        allInputs.forEach(input => {
+            // 跳过不可见、禁用或只读的字段
+            if (!isElementVisible(input) || input.disabled || input.readOnly) {
+                return;
+            }
+
+            // 跳过明确的密码字段
+            if (input.type === 'password') {
+                return;
+            }
+
+            // 跳过不合适的input类型
+            if (['hidden', 'submit', 'button', 'reset', 'file', 'image', 'checkbox', 'radio'].includes(input.type)) {
+                return;
+            }
+
+            // 检查是否是用户名字段的各种条件
+            const name = (input.name || '').toLowerCase();
+            const id = (input.id || '').toLowerCase();
+            const placeholder = (input.placeholder || '').toLowerCase();
+            const autocomplete = (input.autocomplete || '').toLowerCase();
+            const className = (input.className || '').toLowerCase();
+
+            // 通过name属性判断
+            if (name.includes('email') || name.includes('user') || name.includes('login') ||
+                name.includes('account') || name.includes('username')) {
+                fields.add(input);
+                console.log('✅ 通过name属性识别用户名字段:', input);
+                return;
+            }
+
+            // 通过id属性判断
+            if (id.includes('email') || id.includes('user') || id.includes('login') ||
+                id.includes('account') || id.includes('username')) {
+                fields.add(input);
+                console.log('✅ 通过id属性识别用户名字段:', input);
+                return;
+            }
+
+            // 通过placeholder判断
+            if (placeholder.includes('email') || placeholder.includes('user') || placeholder.includes('邮箱') ||
+                placeholder.includes('用户') || placeholder.includes('账号') || placeholder.includes('手机')) {
+                fields.add(input);
+                console.log('✅ 通过placeholder识别用户名字段:', input);
+                return;
+            }
+
+            // 通过autocomplete判断
+            if (autocomplete.includes('email') || autocomplete.includes('username') || autocomplete.includes('tel')) {
+                fields.add(input);
+                console.log('✅ 通过autocomplete识别用户名字段:', input);
+                return;
+            }
+
+            // 通过input类型判断
+            if (input.type === 'email' || input.type === 'tel') {
+                fields.add(input);
+                console.log('✅ 通过type属性识别用户名字段:', input);
+                return;
+            }
+
+            // Material-UI特殊处理
+            if (className.includes('muiinputbase-input') || className.includes('MuiInputBase-input')) {
+                // 查找关联的label
+                const formControl = input.closest('.MuiFormControl-root');
+                if (formControl) {
+                    const label = formControl.querySelector('.MuiFormLabel-root, .MuiInputLabel-root');
+                    if (label) {
+                        const labelText = label.textContent.toLowerCase();
+                        if (labelText.includes('email') || labelText.includes('user') || labelText.includes('邮箱') ||
+                            labelText.includes('用户') || labelText.includes('账号')) {
+                            fields.add(input);
+                            console.log('✅ 通过Material-UI label识别用户名字段:', input);
+                            return;
+                        }
                     }
-                });
-            } catch (e) {
-                console.warn(`选择器 ${selector} 失败:`, e);
+                }
             }
         });
 
+        // 2. 如果没有找到明确的用户名字段，查找第一个text类型的input（在密码字段之前）
+        if (fields.size === 0) {
+            const passwordField = document.querySelector('input[type="password"]');
+            if (passwordField) {
+                const allTextInputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type]), input[type=""]'))
+                    .filter(input => isElementVisible(input) && !input.disabled && !input.readOnly);
+
+                for (const textInput of allTextInputs) {
+                    // 检查这个text input是否在密码字段之前（在DOM中的位置）
+                    const comparison = textInput.compareDocumentPosition(passwordField);
+                    if (comparison & Node.DOCUMENT_POSITION_FOLLOWING) {
+                        fields.add(textInput);
+                        console.log('✅ 通过位置推断识别用户名字段:', textInput);
+                        break; // 只取第一个
+                    }
+                }
+            }
+        }
+
+        console.log('🔍 最终找到的用户名字段:', Array.from(fields));
         return Array.from(fields);
     }
 
-    // 查找密码字段
-    function findAllPasswordFields() {
-        const fields = Array.from(document.querySelectorAll('input[type="password"]'))
-            .filter(field => isElementVisible(field));
+    // 高级密码字段查找 - 完全重写
+    function findPasswordFieldsAdvanced() {
+        const fields = [];
+
+        // 查找所有密码字段
+        const passwordInputs = document.querySelectorAll('input[type="password"]');
+
+        passwordInputs.forEach(input => {
+            if (isElementVisible(input) && !input.disabled && !input.readOnly) {
+                fields.push(input);
+                console.log('✅ 找到密码字段:', input);
+            }
+        });
+
+        console.log('🔍 最终找到的密码字段:', fields);
         return fields;
+    }
+
+    // 高级字段填充函数 - 完全重写，专门针对Material-UI
+    function fillInputFieldAdvanced(field, value, fieldType) {
+        return new Promise(async (resolve) => {
+            if (!field || !value) {
+                console.log(`❌ ${fieldType}字段或值为空`);
+                resolve(false);
+                return;
+            }
+
+            try {
+                console.log(`🔐 开始填充${fieldType}字段:`, field, '值:', value.substring(0, 3) + '***');
+
+                // 检查字段状态
+                if (!isElementVisible(field)) {
+                    console.log(`❌ ${fieldType}字段不可见`);
+                    resolve(false);
+                    return;
+                }
+
+                if (field.disabled || field.readOnly) {
+                    console.log(`❌ ${fieldType}字段被禁用或只读`);
+                    resolve(false);
+                    return;
+                }
+
+                // 记录原始值
+                const originalValue = field.value;
+                console.log(`📝 ${fieldType}字段原始值:`, originalValue);
+
+                // 第一步：聚焦并准备字段
+                field.focus();
+                console.log(`👆 ${fieldType}字段已聚焦`);
+
+                // 等待聚焦生效
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                // 第二步：React特殊处理 - 在设置值之前
+                let reactProps = null;
+                try {
+                    // 查找React实例
+                    const reactKeys = Object.keys(field).find(key =>
+                        key.startsWith('__reactInternalInstance') ||
+                        key.startsWith('_reactInternalInstance') ||
+                        key.startsWith('__reactInternalFiber') ||
+                        key.startsWith('_reactInternalFiber')
+                    );
+
+                    if (reactKeys) {
+                        const reactInstance = field[reactKeys];
+                        if (reactInstance) {
+                            reactProps = reactInstance.memoizedProps ||
+                                        (reactInstance._currentElement && reactInstance._currentElement.props) ||
+                                        reactInstance.return?.memoizedProps;
+                            console.log('🔍 找到React实例和props:', reactProps);
+                        }
+                    }
+                } catch (e) {
+                    console.log('⚠️ React实例查找失败:', e);
+                }
+
+                // 第三步：清空字段
+                field.value = '';
+
+                // 触发清空事件
+                triggerEventAdvanced(field, 'input', '');
+
+                // 等待清空生效
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                // 第四步：设置新值 - 多种方式同时进行
+
+                // 方式1: 直接设置value
+                field.value = value;
+                console.log(`📝 方式1完成，当前值:`, field.value);
+
+                // 方式2: 使用原生setter
+                try {
+                    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                    if (descriptor && descriptor.set) {
+                        descriptor.set.call(field, value);
+                        console.log(`📝 方式2完成，当前值:`, field.value);
+                    }
+                } catch (e) {
+                    console.log(`⚠️ 方式2失败:`, e);
+                }
+
+                // 方式3: React特殊处理
+                if (reactProps) {
+                    try {
+                        // 清除React的_valueTracker
+                        if (field._valueTracker) {
+                            field._valueTracker.setValue('');
+                        }
+
+                        // 直接修改React的内部状态
+                        const lastValue = field.value;
+                        field.value = value;
+
+                        // 创建合成事件
+                        const event = {
+                            target: field,
+                            currentTarget: field,
+                            type: 'change',
+                            bubbles: true,
+                            cancelable: true,
+                            nativeEvent: new Event('change', { bubbles: true })
+                        };
+
+                        // 触发React的onChange
+                        if (reactProps.onChange) {
+                            reactProps.onChange(event);
+                            console.log('✅ React onChange已触发');
+                        }
+
+                        // 触发React的onInput
+                        if (reactProps.onInput) {
+                            reactProps.onInput(event);
+                            console.log('✅ React onInput已触发');
+                        }
+
+                        console.log(`📝 React方式完成，当前值:`, field.value);
+                    } catch (e) {
+                        console.log('⚠️ React特殊处理失败:', e);
+                    }
+                }
+
+                // 等待React处理
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // 第五步：Material-UI特殊处理
+                try {
+                    const formControl = field.closest('.MuiFormControl-root');
+                    if (formControl) {
+                        console.log('🔍 检测到Material-UI表单控件');
+
+                        const label = formControl.querySelector('.MuiInputLabel-root, .MuiFormLabel-root');
+                        if (label) {
+                            // 激活label的shrink状态
+                            label.setAttribute('data-shrink', 'true');
+                            label.classList.add('MuiInputLabel-shrink');
+                            label.classList.remove('MuiInputLabel-outlined');
+                            console.log('✅ Material-UI label状态已更新');
+                        }
+
+                        // 更新输入框的状态
+                        const inputBase = formControl.querySelector('.MuiInputBase-root');
+                        if (inputBase) {
+                            inputBase.classList.add('Mui-focused');
+                            console.log('✅ Material-UI输入框focused状态已更新');
+                        }
+                    }
+                } catch (e) {
+                    console.log('⚠️ Material-UI特殊处理失败:', e);
+                }
+
+                // 第六步：触发所有相关事件
+                triggerEventAdvanced(field, 'input', value);
+                triggerEventAdvanced(field, 'change', value);
+
+                // 等待事件处理
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // 第七步：强制保持值
+                const checkAndMaintainValue = () => {
+                    if (field.value !== value) {
+                        console.log(`🔧 检测到值被清空，重新设置: ${field.value} -> ${value}`);
+                        field.value = value;
+
+                        // 重新触发React事件
+                        if (reactProps && reactProps.onChange) {
+                            const event = {
+                                target: field,
+                                currentTarget: field,
+                                type: 'change'
+                            };
+                            reactProps.onChange(event);
+                        }
+                    }
+                };
+
+                // 多次检查和维护值
+                setTimeout(checkAndMaintainValue, 50);
+                setTimeout(checkAndMaintainValue, 150);
+                setTimeout(checkAndMaintainValue, 300);
+
+                // 等待最终稳定
+                await new Promise(resolve => setTimeout(resolve, 400));
+
+                // 第八步：验证填充结果
+                const finalValue = field.value;
+                console.log(`🔍 ${fieldType}字段最终值:`, finalValue);
+
+                if (finalValue === value) {
+                    // 添加视觉反馈
+                    field.style.backgroundColor = '#dcfce7';
+                    field.style.borderColor = '#10b981';
+                    field.style.transition = 'all 0.3s ease';
+
+                    setTimeout(() => {
+                        field.style.backgroundColor = '';
+                        field.style.borderColor = '';
+                        field.style.transition = '';
+                    }, 2000);
+
+                    console.log(`✅ ${fieldType}字段填充成功！`);
+                    resolve(true);
+                } else {
+                    console.log(`❌ ${fieldType}字段填充失败，期望值: ${value}，实际值: ${finalValue}`);
+
+                    // 最后一次尝试
+                    console.log('🔧 进行最后一次填充尝试...');
+                    field.value = value;
+
+                    setTimeout(() => {
+                        const retryValue = field.value;
+                        console.log(`🔍 重试后${fieldType}字段值:`, retryValue);
+                        resolve(retryValue === value);
+                    }, 100);
+                }
+
+            } catch (error) {
+                console.error(`❌ 填充${fieldType}字段时发生异常:`, error);
+                resolve(false);
+            }
+        });
+    }
+
+    // 高级事件触发函数
+    function triggerEventAdvanced(element, eventType, value) {
+        try {
+            let event;
+
+            switch (eventType) {
+                case 'input':
+                    event = new InputEvent('input', {
+                        bubbles: true,
+                        cancelable: true,
+                        data: value,
+                        inputType: 'insertText'
+                    });
+                    break;
+
+                case 'change':
+                    event = new Event('change', {
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    break;
+
+                case 'focus':
+                    event = new FocusEvent('focus', {
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    break;
+
+                case 'blur':
+                    event = new FocusEvent('blur', {
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    break;
+
+                case 'keydown':
+                case 'keyup':
+                    event = new KeyboardEvent(eventType, {
+                        bubbles: true,
+                        cancelable: true,
+                        key: 'Tab'
+                    });
+                    break;
+
+                default:
+                    event = new Event(eventType, {
+                        bubbles: true,
+                        cancelable: true
+                    });
+            }
+
+            element.dispatchEvent(event);
+            console.log(`✅ ${eventType}事件已触发`);
+
+        } catch (e) {
+            console.warn(`❌ 触发${eventType}事件失败:`, e);
+        }
     }
 
     // 检查元素是否可见
@@ -730,7 +1031,7 @@
                    style.display !== 'none' &&
                    style.visibility !== 'hidden' &&
                    style.opacity !== '0' &&
-                   !element.hidden;
+                   element.offsetParent !== null;
         } catch (e) {
             return false;
         }
@@ -1524,7 +1825,28 @@
             font-style: italic;
         }
 
+        .pm-form-overlay {
+            position: absolute;
+            border: 3px solid #10b981;
+            background: rgba(16, 185, 129, 0.1);
+            pointer-events: none;
+            z-index: 9998;
+            border-radius: 8px;
+            animation: highlightForm 3s ease-in-out;
+        }
+
+        @keyframes highlightForm {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 1; }
+        }
+
         @media (max-width: 768px) {
+            .pm-popup {
+                width: 95%;
+                right: 2.5%;
+                bottom: 80px;
+            }
+
             .pm-modal-content {
                 margin: 16px;
                 max-height: 90vh;
@@ -1544,6 +1866,11 @@
             .pm-history-actions {
                 justify-content: center;
             }
+
+            .pm-floating-btn {
+                bottom: 15px;
+                right: 15px;
+            }
         }
     `);
 
@@ -1551,7 +1878,7 @@
 
     // 初始化
     async function init() {
-        console.log('🔐 密码管理助手 Pro 已启动（优化版）');
+        console.log('🔐 密码管理助手 Pro 已启动（Material-UI完全修复版）');
 
         checkPasswordManagerSite();
 
@@ -1570,7 +1897,6 @@
         if (isPasswordManagerSite) {
             monitorPasswordManagerAuth();
         }
-        // 移除自动检查密码匹配，只在用户主动操作时进行
     }
 
     // 验证登录状态 - 优化版本
@@ -1877,7 +2203,7 @@
                     viewPasswordHistory(passwordId);
                 }
             } else if (loginBtn) {
-                 window.open(CONFIG.API_BASE, '_blank');
+                window.open(CONFIG.API_BASE, '_blank');
             } else if (tokenDisplay) {
                 window.pmExtension.copyToken(authToken);
             } else if (actionButton) {
@@ -2075,16 +2401,6 @@
         return div.innerHTML;
     }
 
-    // 渲染无匹配
-    function renderNoMatches() {
-        return `
-            <div class="pm-no-matches">
-                <p>🔍 未找到匹配的账户</p>
-                <p style="font-size: 12px; margin-top: 4px;">登录后将自动保存新账户</p>
-            </div>
-        `;
-    }
-
     // 渲染检测到的表单
     function renderDetectedForms() {
         if (detectedForms.length === 0 || isPasswordManagerSite) return '';
@@ -2098,45 +2414,61 @@
         `;
     }
 
-    // 检测登录表单
+    // 增强的登录表单检测 - 支持Material-UI等现代框架
     function detectLoginForms() {
-        const forms = document.querySelectorAll('form');
         detectedForms = [];
 
+        // 策略1: 查找包含用户名和密码字段的 form
+        const forms = document.querySelectorAll('form');
         forms.forEach(form => {
-            const usernameField = form.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="email"], input[name*="login"], input[id*="user"], input[id*="email"], input[id*="login"]');
-            const passwordField = form.querySelector('input[type="password"]');
+            const usernameFields = findUsernameFieldsAdvanced().filter(field => form.contains(field));
+            const passwordFields = findPasswordFieldsAdvanced().filter(field => form.contains(field));
 
-            if (usernameField && passwordField) {
-                if (isElementVisible(usernameField) && isElementVisible(passwordField)) {
-                    detectedForms.push(form);
-
-                    if (CONFIG.AUTO_SAVE && !isPasswordManagerSite) {
-                        form.addEventListener('submit', handleFormSubmit);
-                    }
+            if (usernameFields.length > 0 && passwordFields.length > 0) {
+                detectedForms.push(form);
+                if (CONFIG.AUTO_SAVE && !isPasswordManagerSite) {
+                    form.removeEventListener('submit', handleFormSubmit);
+                    form.addEventListener('submit', handleFormSubmit);
                 }
+                console.log('✅ 检测到登录表单 (Form-based):', form);
             }
         });
 
-        console.log(`🔍 检测到 ${detectedForms.length} 个登录表单`);
+        // 策略2: 如果没有找到form，但找到了用户名和密码字段
+        if (detectedForms.length === 0) {
+            const usernameFields = findUsernameFieldsAdvanced();
+            const passwordFields = findPasswordFieldsAdvanced();
+
+            if (usernameFields.length > 0 && passwordFields.length > 0) {
+                // 创建虚拟表单用于检测
+                const virtualForm = document.body;
+                detectedForms.push(virtualForm);
+                console.log('✅ 检测到登录字段（无form包裹）');
+            }
+        }
+
+        console.log(`🔍 最终检测到 ${detectedForms.length} 个登录表单。`);
         updateButtonVisibility();
     }
 
-    // 处理表单提交 - 优化版本
+    // 处理表单提交 - 增强对Material-UI的支持
     async function handleFormSubmit(e) {
         if (!isAuthenticated || isPasswordManagerSite) return;
 
         const form = e.target;
 
-        const passwordFields = form.querySelectorAll('input[type="password"]');
-        const visiblePasswordFields = Array.from(passwordFields).filter(field => isElementVisible(field));
+        // 查找所有密码字段
+        const passwordFields = findPasswordFieldsAdvanced().filter(field => form.contains(field));
+        const visiblePasswordFields = passwordFields.filter(field => isElementVisible(field));
 
         if (visiblePasswordFields.length > 1) {
             console.log('📝 检测到注册/修改密码表单（存在多个密码框），本次提交将不自动保存密码。');
             return;
         }
 
-        const usernameField = form.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="email"], input[name*="login"], input[id*="user"], input[id*="email"], input[id*="login"]');
+        // 查找用户名字段
+        const usernameFields = findUsernameFieldsAdvanced().filter(field => form.contains(field));
+        const usernameField = usernameFields[0];
         const passwordField = visiblePasswordFields[0];
 
         if (usernameField && passwordField && usernameField.value && passwordField.value) {
@@ -2171,7 +2503,7 @@
                         showPasswordChangePrompt(response.existing, submitData.password);
                     } else if (response.saved) {
                         showNotification('✅ 新账户已自动保存', 'success');
-                        cachedMatches = []; // 清除缓存
+                        cachedMatches = [];
                     }
                 } catch (error) {
                     console.error('保存密码失败:', error);
@@ -2193,7 +2525,7 @@
         prompt.innerHTML = `
             <h4>🔄 检测到相同账号的密码变更</h4>
             <p>网站：${escapeHtml(existingPassword.siteName)}<br>
-               用户：${escapeHtml(existingPassword.username)}</p>
+                用户：${escapeHtml(existingPassword.username)}</p>
             <p style="font-size: 11px;"><strong>注意：</strong>相同账号不会被保存为新账户，只能选择更新现有账户的密码。</p>
             <div class="pm-password-change-actions">
                 <button class="pm-btn-update">
@@ -2264,7 +2596,14 @@
                     mutation.addedNodes.forEach((node) => {
                         if (node.nodeType === Node.ELEMENT_NODE) {
                             if (node.tagName === 'FORM' ||
-                                node.querySelector && (node.querySelector('form') || node.querySelector('input[type="password"]'))) {
+                                (node instanceof HTMLElement && (
+                                    node.querySelector('input[type="password"]') ||
+                                    node.querySelector('input[name*="user" i]') ||
+                                    node.querySelector('input[id*="user" i]') ||
+                                    node.querySelector('.MuiInputBase-input') ||
+                                    node.classList.contains('MuiFormControl-root')
+                                ))
+                            ) {
                                 shouldRedetect = true;
                             }
                         }
@@ -2273,9 +2612,9 @@
             });
 
             if (shouldRedetect) {
-                setTimeout(() => {
+                clearTimeout(window._pm_detection_timer);
+                window._pm_detection_timer = setTimeout(() => {
                     detectLoginForms();
-                    // 移除自动检查密码匹配
                 }, 500);
             }
         });
@@ -2376,7 +2715,7 @@
         });
 
         GM_registerMenuCommand('🔍 调试信息', () => {
-            console.log('=== 密码管理助手 Pro 调试信息（优化版）===');
+            console.log('=== 密码管理助手 Pro 调试信息（Material-UI完全修复版）===');
             console.log('认证状态:', isAuthenticated);
             console.log('认证已验证:', authVerified);
             console.log('当前用户:', currentUser);
@@ -2387,6 +2726,8 @@
             console.log('配置信息:', CONFIG);
             console.log('API调用历史:', apiCallHistory);
             console.log('最后API调用时间:', new Date(lastApiCall).toLocaleString());
+            console.log('找到的用户名字段:', findUsernameFieldsAdvanced());
+            console.log('找到的密码字段:', findPasswordFieldsAdvanced());
 
             showNotification('🔍 调试信息已输出到控制台', 'info');
         });
