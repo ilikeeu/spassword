@@ -3408,7 +3408,10 @@ function getHTML5() {
     <!-- 登录界面 -->
     <section id="authSection" class="auth-section">
         <article class="auth-card">
-            <div class="logo">🔐</div>
+            <div class="logo"><div class="avatar">
+    <img src="https://yanxuan.nosdn.127.net/233a2a8170847d3287ec058c51cf60a9.jpg" alt="spassword-deno" style="width:20%;height:20%;border-radius:50%;object-fit:cover;"/>
+            </div>
+</div>
             <header>
                 <h1>密码管理器 Pro</h1>
                 <p>安全、便捷、智能的密码管理解决方案</p>
